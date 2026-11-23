@@ -22,6 +22,8 @@ export default [
       'local/no-dead-button': 'error',
       // Native confirm, prompt and alert are unstyled and block the page; use the in-app dialogs.
       'local/no-native-dialog': 'error',
+      // Settings screens compose the design system (components/ui + settings/ui) only.
+      'local/settings-primitives-only': 'error',
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'error',
       // An icon-only button must have a name a screen reader and a phone's voice control can use.

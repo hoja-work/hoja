@@ -80,3 +80,46 @@ This is the inverse of the active/selected rule above, which is deliberate: hove
 - A panel rendered outside its trigger's DOM subtree, such as through a portal, must pass its ref to `useMenuDismiss` through `alsoWithin` (or include it in `within`) so presses inside the panel do not dismiss it.
 - Popover triggers expose `aria-haspopup`, `aria-expanded` and `aria-controls`, and the panel uses the matching `role` and `id`.
 - Position portaled panels with fixed coordinates and clamp them to the viewport so scroll containers cannot clip them.
+
+## Settings
+
+Every settings screen is composed from two layers and nothing else (enforced by `local/settings-primitives-only` in `src/settings/sections/`):
+
+- `src/components/ui/`: primitives built on `radix-ui` (`Button`, `Input`, `Textarea`, `Label`, `Switch`, `Checkbox`, `RadioGroup`, `Segmented`, `Select`, `Dialog`, `AlertDialog`, `DropdownMenu`, `Tooltip`, `toast`). Radix layers close on an outside press and on Escape themselves, which satisfies the popover rule above.
+- `src/settings/ui/`: settings composites (`SettingsPage`, `SettingsSection`, `SettingRow`, `ResourceRow`, `Loadable`, `EmptyState`, `ErrorState`, `Notice`, `Badge`, `CopyField`, `FormDialog`, `Field`, `ConfirmAction`, `DangerZone`) and the save hooks (`useSetting`, `useSettingText`, `useResource`, `useAction`).
+
+Sections are listed once, in `src/settings/registry.ts`. The navigation, the router and the browser suite read that list. A section is one lazily loaded file in `src/settings/sections/` that reads the shell through `useSettings()`.
+
+The settings navigation is not a second sidebar. It renders inside the app's single `<aside id="workspace-sidebar">`, using the shared `SidebarItem` and `SidebarGroup` from `src/components/sidebar.tsx`.
+
+### Saving
+
+| Control | When it saves | Feedback |
+| --- | --- | --- |
+| Switch, segmented control, radio cards, select | Immediately, optimistically | Inline `Saving…` then `Saved`. On failure the control snaps back and the row shows the reason with Retry. |
+| Text and number fields | On blur or Enter; Escape reverts | Validation runs before the request; the error sits under the field. |
+| Several fields that only make sense together (a policy, a provider) | One explicit primary button per form | The button shows its busy state; the form keeps its values on failure. |
+| Create or edit a list item | `FormDialog` | The dialog closes only after the server succeeded. |
+
+- The latest change wins. A slow earlier response never overwrites a later choice (`useSetting` sequences requests).
+- A workspace-wide change may offer Undo through `undoLabel`. Routine personal changes do not toast.
+- A settings screen never mixes instant controls and a Save button for the same object.
+
+### Destructive and secret actions
+
+- Anything that deletes, revokes, disconnects, removes a person or starts work for many tasks goes through `ConfirmAction`, which names the object and the consequence.
+- If the action cannot be undone and affects other people (deleting a workspace or a team, revoking every session), the person must type the object's name.
+- Row actions live in one `⋯` menu (`ResourceRow actions`). Destructive items are last and use `destructive`.
+- A secret is shown once, in a `CopyField`, with a sentence saying it will not be shown again. It is never re-rendered.
+
+### Access
+
+- Gate on what the API checks. Where the backend checks a capability (`team.create`, `member.invite`, `label.manage`, `extension.manage`, `task.delete`), use `can(capability)`. Where it checks admin, use `isAdmin`.
+- Someone who may read but not change a setting sees the value disabled, with a `locked` reason on the row. Do not hide it.
+- Admin-only sections are marked `admin` in the registry. The router shows "Only workspace admins can open this page" for everyone else.
+
+### States and copy
+
+- Every remote read goes through `Loadable`: skeleton rows while loading, `ErrorState` with Try again, and an `EmptyState` that names the next action.
+- Sentence case everywhere. Errors say what happened and what to do next. Never show server internals (hosts, stack traces, SQL).
+- Use `text-base` for labels and `text-sm` for descriptions. Page and section titles use the measured `--ds-settings-*` tokens.

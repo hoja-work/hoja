@@ -286,7 +286,7 @@ def test_full_broker_flow_stores_a_sealed_grant(tmp_path, broker) -> None:
                 follow_redirects=False,
             )
     assert res.status_code == 302
-    assert res.headers["location"] == f"{TENANT}/?connector=calendly-connected"
+    assert res.headers["location"] == f"{TENANT}/workspace/settings/connections?connector=calendly-connected"
     # The token exchange repeats the broker callback, or Calendly would refuse the code.
     body = parse_qs(token_route.calls.last.request.content.decode())
     assert body["redirect_uri"] == [BROKER_CALLBACK]
@@ -321,7 +321,7 @@ def test_finish_accepts_its_own_workspace_when_the_transport_says_http(
                 follow_redirects=False,
             )
     assert res.status_code == 302, res.text
-    assert res.headers["location"] == f"{TENANT}/?connector=calendly-connected"
+    assert res.headers["location"] == f"{TENANT}/workspace/settings/connections?connector=calendly-connected"
 
 
 def test_a_replayed_state_is_refused(tmp_path, broker) -> None:
@@ -368,7 +368,7 @@ def test_without_a_broker_the_callback_is_the_install_itself(tmp_path, monkeypat
                 follow_redirects=False,
             )
     assert done.status_code == 302
-    assert done.headers["location"] == "/?connector=calendly-connected"
+    assert done.headers["location"] == "/workspace/settings/connections?connector=calendly-connected"
     body = parse_qs(token_route.calls.last.request.content.decode())
     assert body["redirect_uri"] == [install_callback]
     assert len(_rows(engine, admin["org_id"])) == 1

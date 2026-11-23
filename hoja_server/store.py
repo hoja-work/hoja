@@ -538,7 +538,7 @@ class Store:
 
     def set_user_preference(self, user_id: str, preference_key: str, value: str) -> bool:
         from hoja_server.notifications import KINDS
-        allowed = {"theme": {"light", "dark"}, "fontSize": {"90", "100", "110"},
+        allowed = {"theme": {"light", "dark", "system"}, "fontSize": {"90", "100", "110"},
                    **{f"notification:{kind}": {"true", "false"} for kind in KINDS}}
         if preference_key not in allowed or value not in allowed[preference_key]:
             return False

@@ -61,3 +61,42 @@
 @custom-variant rail-collapsed (&:where(.app[data-sidebar-collapsed] *));
 @custom-variant route-review (&:where(body:has([data-reviews-page]) *));
 @custom-variant route-fullbleed (&:where(.app:has([data-pulse-page],[data-inbox-page],[data-initiatives-page],[data-projects-reference],[data-project-reference],[data-workspace-views-page],[data-my-issues-view],[data-mt-page],.agent-chat-page,[data-settings-sidebar]) *));
+
+/* Component primitives (src/components/ui, built on radix-ui). These aliases give the
+ * shadcn-style names a meaning in this palette, so a primitive written as bg-popover or
+ * border-input follows the same light/dark variables as the rest of the app. */
+@theme inline {
+  --color-popover: var(--panel);
+  --color-popover-foreground: var(--text);
+  --color-card: var(--panel);
+  --color-card-foreground: var(--text);
+  --color-border: var(--line);
+  --color-input: var(--line);
+  --color-ring: var(--accent);
+  --color-primary: var(--text);
+  --color-primary-foreground: var(--bg);
+  --color-destructive: var(--danger);
+  --color-muted-foreground: var(--muted);
+  --animate-fade-in: ds-fade-in 120ms ease-out;
+  --animate-fade-out: ds-fade-out 100ms ease-in;
+  --animate-pop-in: ds-pop-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-pop-out: ds-pop-out 100ms ease-in;
+  --animate-toast-in: ds-toast-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes ds-fade-in { from { opacity: 0 } to { opacity: 1 } }
+@keyframes ds-fade-out { from { opacity: 1 } to { opacity: 0 } }
+@keyframes ds-pop-in { from { opacity: 0; transform: scale(0.97) } to { opacity: 1; transform: scale(1) } }
+@keyframes ds-pop-out { from { opacity: 1; transform: scale(1) } to { opacity: 0; transform: scale(0.97) } }
+@keyframes ds-toast-in { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: translateY(0) } }
+@media (prefers-reduced-motion: reduce) {
+  [data-slot] { animation-duration: 1ms !important; }
+}
+/* Radix state hooks: state-open:animate-pop-in instead of data-[state=open]:… everywhere. */
+/* dark: follows the app theme (data-theme on <html>, set from the account preference),
+ * not the OS media query: "system" is resolved to light/dark before it is written. */
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+@custom-variant state-open (&[data-state=open]);
+@custom-variant state-closed (&[data-state=closed]);
+@custom-variant state-checked (&[data-state=checked]);
+@custom-variant state-on (&[data-state=on]);
+@custom-variant highlighted (&[data-highlighted]);

@@ -604,7 +604,7 @@ def connector_routes(
                 )
         # `?connector=<addon>-connected` is what Settings reads to say which grant was just widened.
         marker = f"{addon}-connected" if addon else "google-connected"
-        return RedirectResponse(f"/?connector={marker}", status_code=302)
+        return RedirectResponse(f"/workspace/settings/connections?connector={marker}", status_code=302)
 
     async def notion_start(request: Request):
         """Begin the Notion OAuth flow. Notion grants are always user-scoped (`owner=user`).
@@ -717,7 +717,7 @@ def connector_routes(
                         updated_at=row["updated_at"],
                     )
                 )
-        return RedirectResponse("/?connector=notion-connected", status_code=302)
+        return RedirectResponse("/workspace/settings/connections?connector=notion-connected", status_code=302)
 
     async def slack_start(request: Request):
         """Begin the Slack OAuth flow. The grant is a **user** token, so it carries one person's
@@ -830,7 +830,7 @@ def connector_routes(
                         updated_at=row["updated_at"],
                     )
                 )
-        return RedirectResponse("/?connector=slack-connected", status_code=302)
+        return RedirectResponse("/workspace/settings/connections?connector=slack-connected", status_code=302)
 
     def _calendly_broker_origin() -> str:
         """The shared return address, or "" when this deployment has no broker.
@@ -1068,7 +1068,7 @@ def connector_routes(
                         updated_at=row["updated_at"],
                     )
                 )
-        back = f"{tenant}/?connector=calendly-connected" if tenant else "/?connector=calendly-connected"
+        back = f"{tenant}/workspace/settings/connections?connector=calendly-connected" if tenant else "/workspace/settings/connections?connector=calendly-connected"
         return RedirectResponse(back, status_code=302)
 
     def _zoom_origin(request: Request) -> str | None:
@@ -1237,7 +1237,7 @@ def connector_routes(
                         updated_at=row["updated_at"],
                     )
                 )
-        return RedirectResponse("/?connector=zoom-connected", status_code=302)
+        return RedirectResponse("/workspace/settings/connections?connector=zoom-connected", status_code=302)
 
     class _GrafanaStaticToken:
         """The stored token as a source the package can ask for, never a string it can persist."""
@@ -1560,7 +1560,7 @@ def connector_routes(
                         updated_at=row["updated_at"],
                     )
                 )
-        return RedirectResponse("/?connector=github-connected", status_code=302)
+        return RedirectResponse("/workspace/settings/connections?connector=github-connected", status_code=302)
 
     def _sentry_redirect_uri(config: SentryOAuthConfig) -> str:
         """The one string registered on the Sentry integration.
@@ -1790,7 +1790,7 @@ def connector_routes(
                         updated_at=row["updated_at"],
                     )
                 )
-        back = f"{tenant}/?connector=sentry-connected" if tenant else "/?connector=sentry-connected"
+        back = f"{tenant}/workspace/settings/connections?connector=sentry-connected" if tenant else "/workspace/settings/connections?connector=sentry-connected"
         return RedirectResponse(back, status_code=302)
 
     async def sentry_webhook(request: Request):

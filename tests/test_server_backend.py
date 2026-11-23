@@ -1122,6 +1122,9 @@ def test_user_preferences_persist_and_validate_values(tmp_path) -> None:
     assert not store.set_user_preference(seeded["user_id"], "theme", "neon")
     assert not store.set_user_preference(seeded["user_id"], "billing", "enterprise")
     assert store.user_preferences(seeded["user_id"]) == {"theme": "dark", "fontSize": "110"}
+    # HOJA-734: "system" follows the operating system's appearance.
+    assert store.set_user_preference(seeded["user_id"], "theme", "system")
+    assert store.user_preferences(seeded["user_id"])["theme"] == "system"
 
 
 
@@ -1776,8 +1779,9 @@ def test_workspace_members_and_admin_update_are_org_scoped(tmp_path) -> None:
         conn.execute(user_table.update().where(user_table.c.id == one["user_id"]).values(admin=False))
     denied = gql(one["token"], "mutation($input: WorkspaceUpdateInput!){workspaceUpdate(input:$input){success organization{name}}}",
                  {"input": {"name": "Unauthorized"}})
-    assert "errors" not in denied
-    assert denied["data"]["workspaceUpdate"]["success"] is False
+    # HOJA-734: a refusal is a typed FORBIDDEN error, not a bare success:false.
+    assert denied["data"]["workspaceUpdate"] is None
+    assert denied["errors"][0]["extensions"]["code"] == "FORBIDDEN"
     denied_invite = gql(one["token"], "mutation($input:MemberInviteInput!){memberInvite(input:$input){success apiKey}}",
                         {"input": {"name": "No admin", "email": f"not-admin-{suffix}@example.test"}})
     assert denied_invite["data"]["memberInvite"]["success"] is False

@@ -78,8 +78,6 @@ import {
 import { MorphIcon } from "morphicons/react";
 import { MobileNavProvider, MobileNavTrigger, useMobileNav } from "./mobileNav";
 import { layoutIcon, listIcon } from "./icons";
-import { ConnectedAppsSettings } from "./ConnectedAppsSettings";
-import { ExtensionsSettings } from "./ExtensionsSettings";
 import { connectRealtime, onRealtimeFrame } from "./realtime";
 import {
   publishChangeEvents,
@@ -114,10 +112,6 @@ import {
   type ViewInput,
 } from "./views";
 import { AgentChatPage } from "./AgentChatPage";
-import { ModelProvidersSettings } from "./ModelProvidersSettings";
-import { ConnectorsSettings } from "./ConnectorsSettings";
-import { AgentConversationsSettings } from "./AgentConversationsSettings";
-import { KnowledgeSettings } from "./KnowledgeSettings";
 import { AgentsSurface } from "./agents/AgentsSurface";
 import { ProjectRepository } from "./agents/ProjectRepository";
 import { LeaderboardPage } from "./profiles/LeaderboardPage";
@@ -158,6 +152,9 @@ import {
 import "./graph/styles.css";
 import "./settings.css";
 import { SettingsSelect } from "./SettingsSelect";
+import { SettingsRoute } from "./settings/SettingsRoute";
+import { SettingsNav } from "./settings/SettingsNav";
+import type { Capability } from "./settings/context";
 import { GraphIssueDetail } from "./graph/tasks";
 import { Avatar, AvatarFallback, AvatarGroup } from "./components/ui/avatar";
 import { ProjectActivity } from "./ProjectActivity";
@@ -203,7 +200,6 @@ import { SignupPage } from "./signup/SignupPage";
 import { SetupWizard } from "./setup/SetupWizard";
 import { createCloudAdapter } from "./setup/cloudAdapter";
 import { loadDraft } from "./setup/draft";
-import { BillingUsageSettings } from "./settings/billing/usage";
 
 const setupAdapter = createCloudAdapter();
 import { InboxPage } from "./inbox/InboxPage";
@@ -1389,8 +1385,17 @@ function App() {
   );
   const [preferenceMessage, setPreferenceMessage] = useState("");
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
     localStorage.setItem("theme", theme);
+    /* "system" follows the operating system and keeps following it while the page is open. */
+    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const apply = () => {
+      document.documentElement.dataset.theme =
+        theme === "system" ? (media?.matches ? "dark" : "light") : theme;
+    };
+    apply();
+    if (theme !== "system" || !media) return;
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
   }, [theme]);
   useEffect(() => {
     document.documentElement.style.setProperty(
@@ -1399,6 +1404,34 @@ function App() {
     );
     localStorage.setItem("hoja_font_scale", fontScale);
   }, [fontScale]);
+  /* The settings save contract wants a promise that rejects on failure (useSetting rolls the
+   * control back and shows the reason); savePreference below keeps the legacy message API. */
+  const persistPreference = async (
+    key: "theme" | "fontSize",
+    value: string,
+  ) => {
+    const d = await gql(
+      `mutation($key:String!,$value:String!){userPreferenceSet(key:$key,value:$value){success theme fontSize}}`,
+      { key, value },
+    );
+    if (!d.userPreferenceSet.success)
+      throw Error("Your preference was not saved. Try again.");
+    if (key === "theme") setTheme(value);
+    else setFontScale(value);
+  };
+  const [capabilities, setCapabilities] = useState<Set<string> | null>(null);
+  const inSettings = view === "Settings";
+  useEffect(() => {
+    // Loaded at start (the workspace menu offers "Manage members" by capability) and again on
+    // entering Settings, so a grant made meanwhile shows up without a reload.
+    let live = true;
+    gql(`query ViewerCapabilities{viewerCapabilities}`)
+      .then((d) => live && setCapabilities(new Set(d.viewerCapabilities)))
+      .catch(() => live && setCapabilities(new Set()));
+    return () => {
+      live = false;
+    };
+  }, [inSettings, workspace.id]);
   const savePreference = async (key: string, value: string) => {
     setPreferenceMessage("Saving…");
     try {
@@ -1894,10 +1927,6 @@ function App() {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem("theme", theme);
-  }, [theme]);
   const [revision, setRevision] = useState(0);
   const syncRef = useRef<SyncHandle | null>(null);
   const [closedCutoff, setClosedCutoff] = useState("");
@@ -3137,43 +3166,32 @@ function App() {
         }}
       />
     ) : view === "Settings" ? (
-      settingsSection === "members" && viewer.admin ? (
-        <MembersPage
-          teams={teams}
-          onTeamsChanged={setTeams}
-          revision={revision}
-          viewer={viewer}
-          onOpenMember={openMember}
-        />
-      ) : (
-        <WorkspaceSettings
-          workspace={workspace}
-          viewer={viewer}
-          onSaved={setWorkspace}
-          onProfileSaved={(name) =>
-            setViewer((current) => ({ ...current, name }))
-          }
-          onTeamsChanged={setTeams}
-          teams={teams}
-          section={settingsSection}
-          theme={theme}
-          onTheme={(value) => void savePreference("theme", value)}
-          onFontScale={(value) => void savePreference("fontSize", value)}
-          preferenceMessage={preferenceMessage}
-          fontScale={fontScale}
-          onOpenCycleSettings={(team) =>
+      <SettingsRoute
+        section={settingsSection}
+        value={{
+          viewer,
+          workspace,
+          teams,
+          isAdmin: !!viewer.admin,
+          can: (c: Capability) => !!viewer.admin || !!capabilities?.has(c),
+          capabilitiesReady: capabilities !== null,
+          onTeamsChanged: (next) => setTeams(next as Team[]),
+          onWorkspaceSaved: setWorkspace,
+          onProfileSaved: (name) =>
+            setViewer((current) => ({ ...current, name })),
+          theme,
+          fontScale,
+          savePreference: persistPreference,
+          openSection: (id) =>
+            navigate("Settings", `/workspace/settings/${id}`),
+          openMember,
+          openTeamCycleSettings: (team) =>
             navigate(
               "Team cycle settings",
               `/workspace/team/${team.key.toLowerCase()}/cycles/settings`,
-            )
-          }
-          onBack={() => {
-            const p = settingsReturn.current;
-            history.pushState({}, "", p);
-            setView(routeView(p));
-          }}
-        />
-      )
+            ),
+        }}
+      />
     ) : view === "Leaderboard" ? (
       <LeaderboardPage
         key={workspace.id}
@@ -3691,678 +3709,713 @@ function App() {
         className="flex shell-phone:flex shell-phone:flex-1 shell-phone:min-h-0 shell-phone:overflow-hidden shell-desktop:contents shell-phone:min-h-[calc(100dvh-60px)] min-h-[calc(100dvh-68px)]"
         data-app-body=""
       >
-        {view === "Settings" ? (
-          <SettingsSidebar
-            workspace={workspace}
-            viewer={viewer}
-            section={settingsSection}
-            onNavigate={(id) =>
-              navigate("Settings", `/workspace/settings/${id}`)
+        <>
+          <button
+            type="button"
+            className={
+              "hidden border-0 p-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2" +
+              " shell-phone:block shell-phone:fixed shell-phone:inset-x-0 shell-phone:top-15 shell-phone:bottom-0 shell-phone:z-34 shell-phone:bg-black/40 invisible opacity-0 data-visible:visible data-visible:opacity-100 transition-opacity duration-150 motion-reduce:transition-none"
             }
-            onBack={() => {
-              const p = settingsReturn.current;
-              history.pushState({}, "", p);
-              setView(routeView(p));
-            }}
-            onLogout={logout}
-            mobile={mobile}
-            onCloseMobile={() => setMobile(false)}
+            data-workspace-drawer-scrim=""
+            aria-label="Close navigation"
+            tabIndex={mobile ? 0 : -1}
+            onClick={closeMobileNav}
+            data-visible={mobile || undefined}
           />
-        ) : (
-          <>
-            <button
-              type="button"
-              className={
-                "hidden border-0 p-0 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2" +
-                " shell-phone:block shell-phone:fixed shell-phone:inset-x-0 shell-phone:top-15 shell-phone:bottom-0 shell-phone:z-34 shell-phone:bg-black/40 invisible opacity-0 data-visible:visible data-visible:opacity-100 transition-opacity duration-150 motion-reduce:transition-none"
-              }
-              data-workspace-drawer-scrim=""
-              aria-label="Close navigation"
-              tabIndex={mobile ? 0 : -1}
-              onClick={closeMobileNav}
-              data-visible={mobile || undefined}
-            />
-            <aside
-              ref={mobileSidebarRef}
-              id="workspace-sidebar"
-              data-workspace-sidebar
-              data-open={mobile || undefined}
-              className="flex min-h-0 min-w-0 flex-none flex-col overflow-x-hidden overflow-y-auto overscroll-contain bg-sidebar px-3 pt-3 pb-0 text-foreground shell-desktop:sticky shell-desktop:top-0 shell-desktop:col-start-1 shell-desktop:row-span-2 shell-desktop:h-dvh shell-desktop:max-h-dvh shell-desktop:w-61 shell-desktop:rail-collapsed:w-11 shell-desktop:rail-collapsed:px-2 shell-desktop:rail-collapsed:py-3 shell-desktop:rail-collapsed:overflow-hidden shell-phone:fixed shell-phone:z-35 shell-phone:inset-y-0 shell-phone:top-15 shell-phone:left-0 shell-phone:w-[min(290px,85vw)] shell-phone:max-w-full shell-phone:-translate-x-full shell-phone:data-open:transform-[translateX(0)]! shell-phone:data-open:translate-x-0 shell-phone:transition-transform shell-phone:duration-150 shell-phone:shadow-xl route-review:relative route-review:top-auto route-review:self-stretch route-review:col-auto route-review:row-auto review-drawer:route-review:fixed! review-drawer:route-review:z-35! review-drawer:route-review:inset-y-0! review-drawer:route-review:left-0! review-drawer:route-review:w-[min(290px,85vw)]! review-drawer:route-review:-translate-x-full! review-drawer:route-review:data-open:translate-x-0! review-drawer:route-review:shadow-xl!"
-              aria-label="Workspace sidebar"
-              role={mobile ? "dialog" : undefined}
-              aria-modal={mobile || undefined}
-            >
-              <div
-                className="relative z-10 flex flex-none items-center gap-1 min-h-9 mb-3 overscroll-none shell-desktop:rail-collapsed:flex-col shell-desktop:rail-collapsed:justify-start shell-desktop:rail-collapsed:gap-1.5 shell-desktop:rail-collapsed:mb-2 min-w-0"
-                data-sidebar-top=""
-              >
+          <aside
+            ref={mobileSidebarRef}
+            id="workspace-sidebar"
+            data-workspace-sidebar
+            data-open={mobile || undefined}
+            className="flex min-h-0 min-w-0 flex-none flex-col overflow-x-hidden overflow-y-auto overscroll-contain bg-sidebar px-3 pt-3 pb-0 text-foreground shell-desktop:sticky shell-desktop:top-0 shell-desktop:col-start-1 shell-desktop:row-span-2 shell-desktop:h-dvh shell-desktop:max-h-dvh shell-desktop:w-61 shell-desktop:rail-collapsed:w-11 shell-desktop:rail-collapsed:px-2 shell-desktop:rail-collapsed:py-3 shell-desktop:rail-collapsed:overflow-hidden shell-phone:fixed shell-phone:z-35 shell-phone:inset-y-0 shell-phone:top-15 shell-phone:left-0 shell-phone:w-[min(290px,85vw)] shell-phone:max-w-full shell-phone:-translate-x-full shell-phone:data-open:transform-[translateX(0)]! shell-phone:data-open:translate-x-0 shell-phone:transition-transform shell-phone:duration-150 shell-phone:shadow-xl route-review:relative route-review:top-auto route-review:self-stretch route-review:col-auto route-review:row-auto review-drawer:route-review:fixed! review-drawer:route-review:z-35! review-drawer:route-review:inset-y-0! review-drawer:route-review:left-0! review-drawer:route-review:w-[min(290px,85vw)]! review-drawer:route-review:-translate-x-full! review-drawer:route-review:data-open:translate-x-0! review-drawer:route-review:shadow-xl!"
+            aria-label={
+              view === "Settings" ? "Settings sidebar" : "Workspace sidebar"
+            }
+            role={mobile ? "dialog" : undefined}
+            aria-modal={mobile || undefined}
+          >
+            {view === "Settings" ? (
+              <SettingsNav
+                section={settingsSection}
+                isAdmin={!!viewer.admin}
+                can={(c) => !!capabilities?.has(c)}
+                account={{
+                  name: viewer.name,
+                  email: viewer.email || workspace.name,
+                  avatar: <UserBlobatar user={viewer} />,
+                }}
+                onNavigate={(id) => {
+                  navigate("Settings", `/workspace/settings/${id}`);
+                  setMobile(false);
+                }}
+                onBack={() => {
+                  const p = settingsReturn.current;
+                  history.pushState({}, "", p);
+                  setView(routeView(p));
+                  setMobile(false);
+                }}
+                onLogout={logout}
+              />
+            ) : (
+              <>
                 <div
-                  className="relative static min-w-0 flex-1 shell-desktop:rail-collapsed:flex-none shell-desktop:rail-collapsed:w-full shell-phone:min-w-0"
-                  data-workspace-picker=""
+                  className="relative z-10 flex flex-none items-center gap-1 min-h-9 mb-3 overscroll-none shell-desktop:rail-collapsed:flex-col shell-desktop:rail-collapsed:justify-start shell-desktop:rail-collapsed:gap-1.5 shell-desktop:rail-collapsed:mb-2 min-w-0"
+                  data-sidebar-top=""
                 >
-                  <UIPopover
-                    open={orgMenu}
-                    onOpenChange={(open) => {
-                      setOrgMenu(open);
-                      if (open) setMoreOpen(false);
-                    }}
+                  <div
+                    className="relative static min-w-0 flex-1 shell-desktop:rail-collapsed:flex-none shell-desktop:rail-collapsed:w-full shell-phone:min-w-0"
+                    data-workspace-picker=""
                   >
-                    <PopoverTrigger asChild>
-                      <button
-                        type="button"
-                        className="border flex items-center gap-1.5 pt-0 pr-1 pb-0 pl-1 bg-transparent text-left border-transparent rounded-lg h-7 border-line hover:bg-subtle hover:border-line w-full min-w-0 max-w-full border-0 text-foreground [&>span:nth-child(2)]:grid [&>span:nth-child(2)]:gap-0.5 [&>span:nth-child(2)]:font-semibold shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:h-7 shell-desktop:rail-collapsed:p-0 hover:bg-[#e5e5e5] shell-phone:pt-1 shell-phone:pr-1 shell-phone:pb-1 shell-phone:pl-1 shell-phone:h-11 shell-phone:gap-2.5"
-                        data-workspace-trigger=""
-                        aria-label={
-                          onboarding.singleOrg
-                            ? "Workspace menu"
-                            : "Switch workspace"
-                        }
-                        aria-haspopup="menu"
-                        aria-controls="workspace-switcher-menu"
-                        disabled={switching}
-                      >
-                        <span
-                          className="grid place-items-center w-5 h-5 flex-none rounded-md bg-[#6d6d73] text-[white] font-[750] text-[10px] shell-desktop:rail-collapsed:size-6 shell-phone:w-8 shell-phone:h-8"
-                          data-workspace-trigger-mark=""
-                        >
-                          {(workspace.name || "W").slice(0, 1).toUpperCase()}
-                        </span>
-                        <span
-                          className="grid gap-px max-w-none min-w-0 flex-1"
-                          data-workspace-trigger-copy=""
-                        >
-                          <b className="text-[13px] font-medium overflow-hidden text-ellipsis whitespace-nowrap text-foreground">
-                            {switching
-                              ? "Switching…"
-                              : workspace.name || "Workspace"}
-                          </b>
-                          <small className="hidden text-muted text-[10px] font-normal">
-                            {workspace.urlKey}
-                          </small>
-                        </span>
-                        <ChevronDown size={15} />
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      align="start"
-                      side="bottom"
-                      sideOffset={4}
-                      portal={false}
-                      id="workspace-switcher-menu"
-                      role="menu"
-                      className="sidebar-popover workspace-menu z-50 min-w-0 max-w-none rounded-[10px] border-line bg-panel p-1.5 text-foreground shadow-(--shadow)"
-                      style={
-                        workspaceMenuWidth === undefined
-                          ? undefined
-                          : {
-                              width: workspaceMenuWidth,
-                              maxWidth: workspaceMenuWidth,
-                            }
-                      }
+                    <UIPopover
+                      open={orgMenu}
+                      onOpenChange={(open) => {
+                        setOrgMenu(open);
+                        if (open) setMoreOpen(false);
+                      }}
                     >
-                      <div
-                        className="border-b border-line flex items-center gap-2.25 pt-2.25 pr-2.25 pb-2.25 pl-2.25 mb-1.25"
-                        data-workspace-menu-head=""
-                      >
-                        <span
-                          className="grid place-items-center w-5 h-5 flex-none rounded-md bg-[#6d6d73] text-[white] font-[750] text-[10px] last:grid last:gap-0.5 last:min-w-0 shell-desktop:rail-collapsed:size-6 shell-phone:w-8 shell-phone:h-8"
-                          data-workspace-trigger-mark=""
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          className="border flex items-center gap-1.5 pt-0 pr-1 pb-0 pl-1 bg-transparent text-left border-transparent rounded-lg h-7 border-line hover:bg-subtle hover:border-line w-full min-w-0 max-w-full border-0 text-foreground [&>span:nth-child(2)]:grid [&>span:nth-child(2)]:gap-0.5 [&>span:nth-child(2)]:font-semibold shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:h-7 shell-desktop:rail-collapsed:p-0 hover:bg-[#e5e5e5] shell-phone:pt-1 shell-phone:pr-1 shell-phone:pb-1 shell-phone:pl-1 shell-phone:h-11 shell-phone:gap-2.5"
+                          data-workspace-trigger=""
+                          aria-label={
+                            onboarding.singleOrg
+                              ? "Workspace menu"
+                              : "Switch workspace"
+                          }
+                          aria-haspopup="menu"
+                          aria-controls="workspace-switcher-menu"
+                          disabled={switching}
                         >
-                          {(workspace.name || "W").slice(0, 1).toUpperCase()}
-                        </span>
-                        <span className="last:grid last:gap-0.5 last:min-w-0">
-                          <b className="text-[12px] overflow-hidden text-ellipsis whitespace-nowrap">
-                            {workspace.name}
-                          </b>
-                          <small className="text-muted text-[10px]">
-                            {workspace.urlKey}
-                          </small>
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setOrgMenu(false);
-                          setMobile(false);
-                          navigate("Settings");
-                        }}
-                        className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+                          <span
+                            className="grid place-items-center w-5 h-5 flex-none rounded-md bg-[#6d6d73] text-[white] font-[750] text-[10px] shell-desktop:rail-collapsed:size-6 shell-phone:w-8 shell-phone:h-8"
+                            data-workspace-trigger-mark=""
+                          >
+                            {(workspace.name || "W").slice(0, 1).toUpperCase()}
+                          </span>
+                          <span
+                            className="grid gap-px max-w-none min-w-0 flex-1"
+                            data-workspace-trigger-copy=""
+                          >
+                            <b className="text-[13px] font-medium overflow-hidden text-ellipsis whitespace-nowrap text-foreground">
+                              {switching
+                                ? "Switching…"
+                                : workspace.name || "Workspace"}
+                            </b>
+                            <small className="hidden text-muted text-[10px] font-normal">
+                              {workspace.urlKey}
+                            </small>
+                          </span>
+                          <ChevronDown size={15} />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        side="bottom"
+                        sideOffset={4}
+                        portal={false}
+                        id="workspace-switcher-menu"
+                        role="menu"
+                        className="sidebar-popover workspace-menu z-50 min-w-0 max-w-none rounded-[10px] border-line bg-panel p-1.5 text-foreground shadow-(--shadow)"
+                        style={
+                          workspaceMenuWidth === undefined
+                            ? undefined
+                            : {
+                                width: workspaceMenuWidth,
+                                maxWidth: workspaceMenuWidth,
+                              }
+                        }
                       >
-                        Workspace settings
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setOrgMenu(false);
-                          setMobile(false);
-                          navigate("Members");
-                        }}
-                        className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
-                      >
-                        Manage members
-                      </button>
-                      {!onboarding.singleOrg && (
+                        <div
+                          className="border-b border-line flex items-center gap-2.25 pt-2.25 pr-2.25 pb-2.25 pl-2.25 mb-1.25"
+                          data-workspace-menu-head=""
+                        >
+                          <span
+                            className="grid place-items-center w-5 h-5 flex-none rounded-md bg-[#6d6d73] text-[white] font-[750] text-[10px] last:grid last:gap-0.5 last:min-w-0 shell-desktop:rail-collapsed:size-6 shell-phone:w-8 shell-phone:h-8"
+                            data-workspace-trigger-mark=""
+                          >
+                            {(workspace.name || "W").slice(0, 1).toUpperCase()}
+                          </span>
+                          <span className="last:grid last:gap-0.5 last:min-w-0">
+                            <b className="text-[12px] overflow-hidden text-ellipsis whitespace-nowrap">
+                              {workspace.name}
+                            </b>
+                            <small className="text-muted text-[10px]">
+                              {workspace.urlKey}
+                            </small>
+                          </span>
+                        </div>
                         <button
                           type="button"
                           role="menuitem"
                           onClick={() => {
                             setOrgMenu(false);
                             setMobile(false);
-                            navigate("Create workspace");
+                            /* Admins land on the workspace's own settings; everyone else on theirs. */
+                            navigate(
+                              "Settings",
+                              viewer.admin
+                                ? "/workspace/settings/workspace"
+                                : "/workspace/settings/preferences",
+                            );
                           }}
                           className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
                         >
-                          Create workspace
+                          {viewer.admin ? "Workspace settings" : "Settings"}
                         </button>
-                      )}
-                      {!onboarding.singleOrg && workspaces.length > 1 && (
-                        <>
-                          <div
-                            className="pt-2.25 pr-2.25 pb-1 pl-2.25 text-muted text-[10px] normal-case tracking-[.08em]"
-                            data-workspace-menu-label=""
-                          >
-                            Switch workspace
-                          </div>
-                          {workspaces.map((w) => (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              key={w.organizationId}
-                              onClick={() => {
-                                setOrgMenu(false);
-                                setMobile(false);
-                                switchWorkspace(w.organizationId);
-                              }}
-                              disabled={
-                                switching || w.organizationId === workspace.id
-                              }
-                              className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
-                            >
-                              {w.name}
-                              <small>{w.urlKey}</small>
-                            </button>
-                          ))}
-                        </>
-                      )}
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setOrgMenu(false);
-                          setMobile(false);
-                          setPhoneSignInOpen(true);
-                        }}
-                        className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
-                      >
-                        Sign in on your phone
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={logout}
-                        className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
-                      >
-                        Log out
-                      </button>
-                    </PopoverContent>
-                  </UIPopover>
-                  {switchError && (
-                    <small
-                      role="alert"
-                      className="block text-danger mt-3 mr-0 mb-3 ml-0 max-w-72 text-xs "
-                    >
-                      {switchError}
-                    </small>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  className="grid w-7 h-7 flex-none place-items-center rounded-[7px] border-0 bg-transparent text-muted hover:bg-subtle hover:text-foreground focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-desktop:rail-collapsed:flex-none shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11"
-                  data-sidebar-icon=""
-                  data-sidebar-search=""
-                  aria-label="Search workspace"
-                  title="Search (Ctrl+K)"
-                  onClick={() => setCommandOpen(true)}
-                >
-                  <Search size={15} aria-hidden="true" />
-                </button>
-                <button
-                  className="grid w-7 h-7 flex-none place-items-center rounded-[7px] border-0 bg-[#f9f9fa] pt-1.5 pr-1.5 pb-1.5 pl-1.5 text-[#2e2e30] hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-foreground focus-visible:outline-offset-2 focus-visible:outline-accent shell-desktop:rail-collapsed:flex-none shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11 hover:bg-[#efeff0] focus-visible:bg-[#efeff0]"
-                  data-sidebar-icon=""
-                  data-sidebar-create=""
-                  aria-label="Create new task"
-                  onClick={() => openNewIssue()}
-                >
-                  <svg
-                    className="w-4 h-4 flex-none"
-                    width="16"
-                    height="16"
-                    viewBox="0 0 16 16"
-                    fill="currentColor"
-                    aria-hidden="true"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      clipRule="evenodd"
-                      d="M7.25 1C7.66414 1 8 1.33589 8 1.75S7.66421 2.5 7.25 2.5H4.75A2.25 2.25 0 0 0 2.5 4.75v6.5a2.25 2.25 0 0 0 2.25 2.25h6.5a2.25 2.25 0 0 0 2.25-2.25v-2.5a.75.75 0 0 1 1.5 0v2.5A3.75 3.75 0 0 1 11.25 15h-6.5A3.75 3.75 0 0 1 1 11.25v-6.5A3.75 3.75 0 0 1 4.75 1h2.5Z"
-                    />
-                    <path d="M13.4326 1.26953a.919.919 0 0 1 1.2988 1.2988L9.2373 8.0615a3.25 3.25 0 0 1-2.082.9385c-.0877.0052-.1606-.0675-.1553-.1553a3.25 3.25 0 0 1 .9385-2.082L13.4326 1.26953Z" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  className="grid flex-none w-7 h-7 rounded-lg bg-transparent text-muted hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-desktop:rail-collapsed:flex-none shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11 group focus-visible:bg-[#e1e1e1] shell-phone:hidden"
-                  data-sidebar-icon=""
-                  data-sidebar-toggle=""
-                  aria-label={
-                    sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
-                  }
-                  aria-expanded={!sidebarCollapsed}
-                  aria-controls="workspace-sidebar"
-                  title={
-                    sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
-                  }
-                  onClick={() => setSidebarCollapsed((v) => !v)}
-                >
-                  {sidebarCollapsed ? (
-                    <PanelLeftOpen size={16} />
-                  ) : (
-                    <PanelLeftClose size={16} />
-                  )}
-                </button>
-              </div>
-              <nav
-                className="relative z-0 min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
-                aria-label="Workspace navigation"
-              >
-                {sections.map(([section, items]) =>
-                  section === "Favorites" &&
-                  !favoriteViews.length &&
-                  !favoriteTasks.length ? null : (
-                    <div
-                      className={
-                        ` mb-4.25` + " mt-0 mr-0 mb-4.25 ml-0" + "" + " mb-4.25"
-                      }
-                      data-nav-group=""
-                      key={section}
-                    >
-                      {section !== "primary" && (
                         <button
                           type="button"
-                          className="flex items-center justify-between w-full h-7 mt-0 mr-1 mb-0.5 ml-1 pt-0 pr-1.25 pb-0 pl-1.25 rounded-md bg-transparent text-muted text-[13px] font-normal text-left hover:bg-subtle focus-visible:bg-subtle hover:text-foreground focus-visible:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:h-auto group shell-desktop:rail-collapsed:hidden"
-                          data-nav-group-toggle=""
-                          aria-expanded={!collapsedSections[section]}
-                          onClick={() =>
-                            setCollapsedSections((c) => ({
-                              ...c,
-                              [section]: !c[section],
-                            }))
-                          }
+                          role="menuitem"
+                          onClick={() => {
+                            setOrgMenu(false);
+                            setMobile(false);
+                            /* Managing people happens in Settings → Members (gated on member.invite,
+                             * like the API); the Members page stays the read-only directory. */
+                            if (
+                              viewer.admin ||
+                              capabilities?.has("member.invite")
+                            )
+                              navigate(
+                                "Settings",
+                                "/workspace/settings/members",
+                              );
+                            else navigate("Members");
+                          }}
+                          className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
                         >
-                          <span>{section}</span>
-                          <ChevronDown
-                            size={12}
-                            className="transition-transform duration-150 motion-reduce:transition-none group-aria-[expanded=false]:-rotate-90"
-                          />
+                          {viewer.admin || capabilities?.has("member.invite")
+                            ? "Manage members"
+                            : "Members"}
                         </button>
-                      )}
-                      {!collapsedSections[section] && (
-                        <>
-                          {section === "Favorites" && (
-                            <div className="grid gap-px" data-nav-favorites="">
-                              {favoriteViews.map((v) => (
-                                <button
-                                  type="button"
-                                  key={v.id}
-                                  className="flex w-full items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 text-left text-[13px] font-normal text-muted whitespace-nowrap hover:bg-neutral-200 aria-[current=page]:bg-subtle aria-[current=page]:font-medium aria-[current=page]:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0"
-                                  data-nav-item=""
-                                  data-nav-favorite-view={v.id}
-                                  aria-current={
-                                    view === "View" &&
-                                    [v.id, v.slugId].includes(
-                                      viewIdentOf(location.pathname) || "",
-                                    )
-                                      ? "page"
-                                      : undefined
-                                  }
-                                  onClick={() => {
-                                    navigateTo(viewPath(v));
-                                    setMobile(false);
-                                  }}
-                                >
-                                  <ViewIcon icon={v.icon} color={v.color} />
-                                  <span className="overflow-hidden text-ellipsis shell-desktop:rail-collapsed:hidden">
-                                    {v.name}
-                                  </span>
-                                </button>
-                              ))}
-                              {favoriteTasks.map((i) => (
-                                <button
-                                  type="button"
-                                  key={i.id}
-                                  className="flex w-full items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 text-left text-[13px] font-normal text-muted whitespace-nowrap hover:bg-neutral-200 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0"
-                                  data-nav-item=""
-                                  onClick={() => {
-                                    openIssue(i);
-                                    setMobile(false);
-                                  }}
-                                >
-                                  <CircleDot size={15} />
-                                  <span className="overflow-hidden text-ellipsis shell-desktop:rail-collapsed:hidden">
-                                    {i.identifier} {i.title}
-                                  </span>
-                                </button>
-                              ))}
+                        {!onboarding.singleOrg && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setOrgMenu(false);
+                              setMobile(false);
+                              navigate("Create workspace");
+                            }}
+                            className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+                          >
+                            Create workspace
+                          </button>
+                        )}
+                        {!onboarding.singleOrg && workspaces.length > 1 && (
+                          <>
+                            <div
+                              className="pt-2.25 pr-2.25 pb-1 pl-2.25 text-muted text-[10px] normal-case tracking-[.08em]"
+                              data-workspace-menu-label=""
+                            >
+                              Switch workspace
                             </div>
-                          )}
-                          {section === "Your teams" &&
-                            teams.map((team) => (
-                              <div
-                                data-team-block=""
-                                key={team.id}
-                                className="mb-1 first-of-type:mt-2"
+                            {workspaces.map((w) => (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                key={w.organizationId}
+                                onClick={() => {
+                                  setOrgMenu(false);
+                                  setMobile(false);
+                                  switchWorkspace(w.organizationId);
+                                }}
+                                disabled={
+                                  switching || w.organizationId === workspace.id
+                                }
+                                className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
                               >
-                                <div
-                                  className="max-md:justify-center flex items-center gap-0"
-                                  data-team-row=""
-                                >
+                                {w.name}
+                                <small>{w.urlKey}</small>
+                              </button>
+                            ))}
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setOrgMenu(false);
+                            setMobile(false);
+                            setPhoneSignInOpen(true);
+                          }}
+                          className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+                        >
+                          Sign in on your phone
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={logout}
+                          className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+                        >
+                          Log out
+                        </button>
+                      </PopoverContent>
+                    </UIPopover>
+                    {switchError && (
+                      <small
+                        role="alert"
+                        className="block text-danger mt-3 mr-0 mb-3 ml-0 max-w-72 text-xs "
+                      >
+                        {switchError}
+                      </small>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="grid w-7 h-7 flex-none place-items-center rounded-[7px] border-0 bg-transparent text-muted hover:bg-subtle hover:text-foreground focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-desktop:rail-collapsed:flex-none shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11"
+                    data-sidebar-icon=""
+                    data-sidebar-search=""
+                    aria-label="Search workspace"
+                    title="Search (Ctrl+K)"
+                    onClick={() => setCommandOpen(true)}
+                  >
+                    <Search size={15} aria-hidden="true" />
+                  </button>
+                  <button
+                    className="grid w-7 h-7 flex-none place-items-center rounded-[7px] border-0 bg-[#f9f9fa] pt-1.5 pr-1.5 pb-1.5 pl-1.5 text-[#2e2e30] hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-foreground focus-visible:outline-offset-2 focus-visible:outline-accent shell-desktop:rail-collapsed:flex-none shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11 hover:bg-[#efeff0] focus-visible:bg-[#efeff0]"
+                    data-sidebar-icon=""
+                    data-sidebar-create=""
+                    aria-label="Create new task"
+                    onClick={() => openNewIssue()}
+                  >
+                    <svg
+                      className="w-4 h-4 flex-none"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 16 16"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        clipRule="evenodd"
+                        d="M7.25 1C7.66414 1 8 1.33589 8 1.75S7.66421 2.5 7.25 2.5H4.75A2.25 2.25 0 0 0 2.5 4.75v6.5a2.25 2.25 0 0 0 2.25 2.25h6.5a2.25 2.25 0 0 0 2.25-2.25v-2.5a.75.75 0 0 1 1.5 0v2.5A3.75 3.75 0 0 1 11.25 15h-6.5A3.75 3.75 0 0 1 1 11.25v-6.5A3.75 3.75 0 0 1 4.75 1h2.5Z"
+                      />
+                      <path d="M13.4326 1.26953a.919.919 0 0 1 1.2988 1.2988L9.2373 8.0615a3.25 3.25 0 0 1-2.082.9385c-.0877.0052-.1606-.0675-.1553-.1553a3.25 3.25 0 0 1 .9385-2.082L13.4326 1.26953Z" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    className="grid flex-none w-7 h-7 rounded-lg bg-transparent text-muted hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-desktop:rail-collapsed:flex-none shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:size-11 group focus-visible:bg-[#e1e1e1] shell-phone:hidden"
+                    data-sidebar-icon=""
+                    data-sidebar-toggle=""
+                    aria-label={
+                      sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+                    }
+                    aria-expanded={!sidebarCollapsed}
+                    aria-controls="workspace-sidebar"
+                    title={
+                      sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+                    }
+                    onClick={() => setSidebarCollapsed((v) => !v)}
+                  >
+                    {sidebarCollapsed ? (
+                      <PanelLeftOpen size={16} />
+                    ) : (
+                      <PanelLeftClose size={16} />
+                    )}
+                  </button>
+                </div>
+                <nav
+                  className="relative z-0 min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
+                  aria-label="Workspace navigation"
+                >
+                  {sections.map(([section, items]) =>
+                    section === "Favorites" &&
+                    !favoriteViews.length &&
+                    !favoriteTasks.length ? null : (
+                      <div
+                        className={
+                          ` mb-4.25` +
+                          " mt-0 mr-0 mb-4.25 ml-0" +
+                          "" +
+                          " mb-4.25"
+                        }
+                        data-nav-group=""
+                        key={section}
+                      >
+                        {section !== "primary" && (
+                          <button
+                            type="button"
+                            className="flex items-center justify-between w-full h-7 mt-0 mr-1 mb-0.5 ml-1 pt-0 pr-1.25 pb-0 pl-1.25 rounded-md bg-transparent text-muted text-[13px] font-normal text-left hover:bg-subtle focus-visible:bg-subtle hover:text-foreground focus-visible:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:h-auto group shell-desktop:rail-collapsed:hidden"
+                            data-nav-group-toggle=""
+                            aria-expanded={!collapsedSections[section]}
+                            onClick={() =>
+                              setCollapsedSections((c) => ({
+                                ...c,
+                                [section]: !c[section],
+                              }))
+                            }
+                          >
+                            <span>{section}</span>
+                            <ChevronDown
+                              size={12}
+                              className="transition-transform duration-150 motion-reduce:transition-none group-aria-[expanded=false]:-rotate-90"
+                            />
+                          </button>
+                        )}
+                        {!collapsedSections[section] && (
+                          <>
+                            {section === "Favorites" && (
+                              <div
+                                className="grid gap-px"
+                                data-nav-favorites=""
+                              >
+                                {favoriteViews.map((v) => (
                                   <button
                                     type="button"
-                                    className="group flex min-h-7  w-full min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-md border-0 bg-transparent px-2 py-1 text-left text-[13px] font-medium text-[#202023] whitespace-nowrap text-ellipsis hover:text-foreground aria-[current=page]:text-foreground aria-[current=page]:font-semibold shell-phone:min-h-11 shell-phone:min-w-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0 hover:bg-transparent hover:text-[#202023]"
-                                    data-team-name=""
-                                    aria-expanded={!collapsedTeams[team.id]}
-                                    onClick={() =>
-                                      setCollapsedTeams((c) => ({
-                                        ...c,
-                                        [team.id]: !c[team.id],
-                                      }))
+                                    key={v.id}
+                                    className="flex w-full items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 text-left text-[13px] font-normal text-muted whitespace-nowrap hover:bg-neutral-200 aria-[current=page]:bg-subtle aria-[current=page]:font-medium aria-[current=page]:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0"
+                                    data-nav-item=""
+                                    data-nav-favorite-view={v.id}
+                                    aria-current={
+                                      view === "View" &&
+                                      [v.id, v.slugId].includes(
+                                        viewIdentOf(location.pathname) || "",
+                                      )
+                                        ? "page"
+                                        : undefined
                                     }
+                                    onClick={() => {
+                                      navigateTo(viewPath(v));
+                                      setMobile(false);
+                                    }}
                                   >
-                                    <Users
-                                      size={15}
-                                      className="size-4 flex-none"
-                                    />
-                                    <span className=" shell-desktop:rail-collapsed:hidden">
-                                      {team.name}
+                                    <ViewIcon icon={v.icon} color={v.color} />
+                                    <span className="overflow-hidden text-ellipsis shell-desktop:rail-collapsed:hidden">
+                                      {v.name}
                                     </span>
                                   </button>
-                                </div>
-                                {!collapsedTeams[team.id] && (
+                                ))}
+                                {favoriteTasks.map((i) => (
+                                  <button
+                                    type="button"
+                                    key={i.id}
+                                    className="flex w-full items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 text-left text-[13px] font-normal text-muted whitespace-nowrap hover:bg-neutral-200 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0"
+                                    data-nav-item=""
+                                    onClick={() => {
+                                      openIssue(i);
+                                      setMobile(false);
+                                    }}
+                                  >
+                                    <CircleDot size={15} />
+                                    <span className="overflow-hidden text-ellipsis shell-desktop:rail-collapsed:hidden">
+                                      {i.identifier} {i.title}
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                            {section === "Your teams" &&
+                              teams.map((team) => (
+                                <div
+                                  data-team-block=""
+                                  key={team.id}
+                                  className="mb-1 first-of-type:mt-2"
+                                >
                                   <div
-                                    className="border-l border-line grid gap-px mt-px mr-0 mb-2 ml-3.5 pl-2.5 shell-desktop:rail-collapsed:hidden"
-                                    data-team-nav-links=""
+                                    className="max-md:justify-center flex items-center gap-0"
+                                    data-team-row=""
                                   >
                                     <button
-                                      className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                       type="button"
-                                      onClick={() => {
-                                        navigate(
-                                          "Team Home",
-                                          `/workspace/team/${team.key.toLowerCase()}/home`,
-                                        );
-                                        setMobile(false);
-                                      }}
-                                      aria-current={
-                                        view === "Team Home" &&
-                                        location.pathname.endsWith("/home")
-                                          ? "page"
-                                          : undefined
+                                      className="group flex min-h-7  w-full min-w-0 flex-1 items-center gap-2 overflow-hidden rounded-md border-0 bg-transparent px-2 py-1 text-left text-[13px] font-medium text-[#202023] whitespace-nowrap text-ellipsis hover:text-foreground aria-[current=page]:text-foreground aria-[current=page]:font-semibold shell-phone:min-h-11 shell-phone:min-w-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0 hover:bg-transparent hover:text-[#202023]"
+                                      data-team-name=""
+                                      aria-expanded={!collapsedTeams[team.id]}
+                                      onClick={() =>
+                                        setCollapsedTeams((c) => ({
+                                          ...c,
+                                          [team.id]: !c[team.id],
+                                        }))
                                       }
                                     >
-                                      Home
+                                      <Users
+                                        size={15}
+                                        className="size-4 flex-none"
+                                      />
+                                      <span className=" shell-desktop:rail-collapsed:hidden">
+                                        {team.name}
+                                      </span>
                                     </button>
-                                    <button
-                                      className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
-                                      type="button"
-                                      onClick={() => {
-                                        navigate(
-                                          "Team issues",
-                                          `/workspace/team/${team.key.toLowerCase()}/active`,
-                                        );
-                                        setMobile(false);
-                                      }}
-                                      aria-current={
-                                        view === "Team issues"
-                                          ? "page"
-                                          : undefined
-                                      }
-                                    >
-                                      Tasks
-                                    </button>
-                                    <button
-                                      className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
-                                      type="button"
-                                      onClick={() => {
-                                        navigate(
-                                          "Team cycles",
-                                          `/workspace/team/${team.key.toLowerCase()}/cycles`,
-                                        );
-                                        setMobile(false);
-                                      }}
-                                      aria-current={
-                                        view === "Team cycles"
-                                          ? "page"
-                                          : undefined
-                                      }
-                                    >
-                                      Cycles
-                                    </button>
+                                  </div>
+                                  {!collapsedTeams[team.id] && (
                                     <div
-                                      className="border-l border-line grid gap-px mt-px mr-0 mb-1 ml-3 pl-2.25 shell-desktop:rail-collapsed:hidden"
-                                      data-team-cycle-links=""
+                                      className="border-l border-line grid gap-px mt-px mr-0 mb-2 ml-3.5 pl-2.5 shell-desktop:rail-collapsed:hidden"
+                                      data-team-nav-links=""
                                     >
-                                      <button
-                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
-                                        type="button"
-                                        aria-current={
-                                          view === "Team cycle" &&
-                                          location.pathname.includes(
-                                            `/team/${team.key.toLowerCase()}/cycle/active`,
-                                          )
-                                            ? "page"
-                                            : undefined
-                                        }
-                                        onClick={() => {
-                                          navigate(
-                                            "Team cycle",
-                                            `/workspace/team/${team.key.toLowerCase()}/cycle/active`,
-                                          );
-                                          setTeamCycleRoute(
-                                            `/workspace/team/${team.key.toLowerCase()}/cycle/active`,
-                                          );
-                                          setMobile(false);
-                                        }}
-                                      >
-                                        Current
-                                      </button>
-                                      <button
-                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
-                                        type="button"
-                                        aria-current={
-                                          view === "Team cycle" &&
-                                          location.pathname.includes(
-                                            `/team/${team.key.toLowerCase()}/cycle/upcoming`,
-                                          )
-                                            ? "page"
-                                            : undefined
-                                        }
-                                        onClick={() => {
-                                          navigate(
-                                            "Team cycle",
-                                            `/workspace/team/${team.key.toLowerCase()}/cycle/upcoming`,
-                                          );
-                                          setTeamCycleRoute(
-                                            `/workspace/team/${team.key.toLowerCase()}/cycle/upcoming`,
-                                          );
-                                          setMobile(false);
-                                        }}
-                                      >
-                                        Upcoming
-                                      </button>
-                                    </div>
-                                    <button
-                                      className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
-                                      type="button"
-                                      onClick={() => {
-                                        navigate(
-                                          "Team projects",
-                                          `/workspace/team/${team.key.toLowerCase()}/projects/all`,
-                                        );
-                                        setMobile(false);
-                                      }}
-                                      aria-current={
-                                        view === "Team projects"
-                                          ? "page"
-                                          : undefined
-                                      }
-                                    >
-                                      Projects
-                                    </button>
-                                    {team.showInitiatives && (
                                       <button
                                         className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
                                         type="button"
-                                        data-team-initiatives=""
                                         onClick={() => {
                                           navigate(
-                                            "Team initiatives",
-                                            `/workspace/team/${team.key.toLowerCase()}/initiatives`,
+                                            "Team Home",
+                                            `/workspace/team/${team.key.toLowerCase()}/home`,
                                           );
                                           setMobile(false);
                                         }}
                                         aria-current={
-                                          view === "Team initiatives" &&
-                                          location.pathname
-                                            .split("/")[3]
-                                            ?.toLowerCase() ===
-                                            team.key.toLowerCase()
+                                          view === "Team Home" &&
+                                          location.pathname.endsWith("/home")
                                             ? "page"
                                             : undefined
                                         }
                                       >
-                                        Initiatives
+                                        Home
                                       </button>
-                                    )}
-                                    <button
-                                      className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
-                                      type="button"
-                                      onClick={() => {
-                                        navigate(
-                                          "Team views",
-                                          `/workspace/team/${team.key.toLowerCase()}/views/issues`,
-                                        );
-                                        setMobile(false);
-                                      }}
-                                      aria-current={
-                                        view === "Team views"
-                                          ? "page"
-                                          : undefined
-                                      }
-                                    >
-                                      Views
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
+                                      <button
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        type="button"
+                                        onClick={() => {
+                                          navigate(
+                                            "Team issues",
+                                            `/workspace/team/${team.key.toLowerCase()}/active`,
+                                          );
+                                          setMobile(false);
+                                        }}
+                                        aria-current={
+                                          view === "Team issues"
+                                            ? "page"
+                                            : undefined
+                                        }
+                                      >
+                                        Tasks
+                                      </button>
+                                      <button
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        type="button"
+                                        onClick={() => {
+                                          navigate(
+                                            "Team cycles",
+                                            `/workspace/team/${team.key.toLowerCase()}/cycles`,
+                                          );
+                                          setMobile(false);
+                                        }}
+                                        aria-current={
+                                          view === "Team cycles"
+                                            ? "page"
+                                            : undefined
+                                        }
+                                      >
+                                        Cycles
+                                      </button>
+                                      <div
+                                        className="border-l border-line grid gap-px mt-px mr-0 mb-1 ml-3 pl-2.25 shell-desktop:rail-collapsed:hidden"
+                                        data-team-cycle-links=""
+                                      >
+                                        <button
+                                          className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                          type="button"
+                                          aria-current={
+                                            view === "Team cycle" &&
+                                            location.pathname.includes(
+                                              `/team/${team.key.toLowerCase()}/cycle/active`,
+                                            )
+                                              ? "page"
+                                              : undefined
+                                          }
+                                          onClick={() => {
+                                            navigate(
+                                              "Team cycle",
+                                              `/workspace/team/${team.key.toLowerCase()}/cycle/active`,
+                                            );
+                                            setTeamCycleRoute(
+                                              `/workspace/team/${team.key.toLowerCase()}/cycle/active`,
+                                            );
+                                            setMobile(false);
+                                          }}
+                                        >
+                                          Current
+                                        </button>
+                                        <button
+                                          className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-1.75 pr-1.75 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                          type="button"
+                                          aria-current={
+                                            view === "Team cycle" &&
+                                            location.pathname.includes(
+                                              `/team/${team.key.toLowerCase()}/cycle/upcoming`,
+                                            )
+                                              ? "page"
+                                              : undefined
+                                          }
+                                          onClick={() => {
+                                            navigate(
+                                              "Team cycle",
+                                              `/workspace/team/${team.key.toLowerCase()}/cycle/upcoming`,
+                                            );
+                                            setTeamCycleRoute(
+                                              `/workspace/team/${team.key.toLowerCase()}/cycle/upcoming`,
+                                            );
+                                            setMobile(false);
+                                          }}
+                                        >
+                                          Upcoming
+                                        </button>
+                                      </div>
+                                      <button
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        type="button"
+                                        onClick={() => {
+                                          navigate(
+                                            "Team projects",
+                                            `/workspace/team/${team.key.toLowerCase()}/projects/all`,
+                                          );
+                                          setMobile(false);
+                                        }}
+                                        aria-current={
+                                          view === "Team projects"
+                                            ? "page"
+                                            : undefined
+                                        }
+                                      >
+                                        Projects
+                                      </button>
+                                      {team.showInitiatives && (
+                                        <button
+                                          className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                          type="button"
+                                          data-team-initiatives=""
+                                          onClick={() => {
+                                            navigate(
+                                              "Team initiatives",
+                                              `/workspace/team/${team.key.toLowerCase()}/initiatives`,
+                                            );
+                                            setMobile(false);
+                                          }}
+                                          aria-current={
+                                            view === "Team initiatives" &&
+                                            location.pathname
+                                              .split("/")[3]
+                                              ?.toLowerCase() ===
+                                              team.key.toLowerCase()
+                                              ? "page"
+                                              : undefined
+                                          }
+                                        >
+                                          Initiatives
+                                        </button>
+                                      )}
+                                      <button
+                                        className="flex min-h-6.75 w-full items-center rounded-[5px] bg-transparent pl-2 pr-2 pt-1.25 pb-1.25 text-left text-[12px] text-muted hover:bg-neutral-200 hover:text-foreground aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 focus-visible:bg-subtle focus-visible:text-foreground"
+                                        type="button"
+                                        onClick={() => {
+                                          navigate(
+                                            "Team views",
+                                            `/workspace/team/${team.key.toLowerCase()}/views/issues`,
+                                          );
+                                          setMobile(false);
+                                        }}
+                                        aria-current={
+                                          view === "Team views"
+                                            ? "page"
+                                            : undefined
+                                        }
+                                      >
+                                        Views
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            {[
+                              ...items,
+                              /* Admins always see the entry, so the screens can be found and turned on
+                               * from where they live; the page offers the switch while it is off. */
+                              ...(section === "primary" &&
+                              (agentsOn || viewer.admin)
+                                ? ([["Agents", GitBranch]] as [
+                                    string,
+                                    typeof GitBranch,
+                                  ][])
+                                : []),
+                            ].map(([label, Icon]) => (
+                              <button
+                                type="button"
+                                className="flex w-full  items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 hover:bg-neutral-200  text-left text-[13px] font-normal text-muted whitespace-nowrap text-ellipsis aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0  aria-[current=page]:bg-subtle aria-[current=page]:font-medium"
+                                data-nav-item=""
+                                key={label}
+                                onClick={() => {
+                                  navigate(label);
+                                  setMobile(false);
+                                }}
+                                aria-current={
+                                  view === label ? "page" : undefined
+                                }
+                              >
+                                <Icon size={15} />
+                                <span className="overflow-hidden text-ellipsis shell-desktop:rail-collapsed:hidden">
+                                  {label === "Favorite views"
+                                    ? "Saved views"
+                                    : label}
+                                </span>
+                                {label === "Inbox" && <InboxBadge />}
+                              </button>
                             ))}
-                          {[
-                            ...items,
-                            /* Admins always see the entry, so the screens can be found and turned on
-                             * from where they live; the page offers the switch while it is off. */
-                            ...(section === "primary" &&
-                            (agentsOn || viewer.admin)
-                              ? ([["Agents", GitBranch]] as [
-                                  string,
-                                  typeof GitBranch,
-                                ][])
-                              : []),
-                          ].map(([label, Icon]) => (
-                            <button
-                              type="button"
-                              className="flex w-full  items-center gap-2 overflow-hidden rounded-lg bg-transparent px-2.5 py-1 hover:bg-neutral-200  text-left text-[13px] font-normal text-muted whitespace-nowrap text-ellipsis aria-[current=page]:bg-accent-soft aria-[current=page]:text-foreground aria-[current=page]:font-semibold focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 shell-phone:min-w-11 pointer-coarse:min-h-11 shell-desktop:rail-collapsed:justify-center shell-desktop:rail-collapsed:px-0  aria-[current=page]:bg-subtle aria-[current=page]:font-medium"
-                              data-nav-item=""
-                              key={label}
-                              onClick={() => {
-                                navigate(label);
-                                setMobile(false);
-                              }}
-                              aria-current={view === label ? "page" : undefined}
-                            >
-                              <Icon size={15} />
-                              <span className="overflow-hidden text-ellipsis shell-desktop:rail-collapsed:hidden">
-                                {label === "Favorite views"
-                                  ? "Saved views"
-                                  : label}
-                              </span>
-                              {label === "Inbox" && <InboxBadge />}
-                            </button>
-                          ))}
-                        </>
-                      )}
-                    </div>
-                  ),
-                )}
-                <div
-                  className="mb-4.25 mt-0 mr-0 ml-0"
-                  data-nav-group=""
-                  data-nav-group-more-control=""
-                >
-                  <UIPopover
-                    open={moreOpen}
-                    onOpenChange={(open) => {
-                      setMoreOpen(open);
-                      if (open) setOrgMenu(false);
-                    }}
+                          </>
+                        )}
+                      </div>
+                    ),
+                  )}
+                  <div
+                    className="mb-4.25 mt-0 mr-0 ml-0"
+                    data-nav-group=""
+                    data-nav-group-more-control=""
                   >
-                    <PopoverTrigger asChild>
-                      <button
-                        type="button"
-                        className="flex items-center gap-2 w-full pt-0 pr-2.25 pb-0 pl-2.25 rounded-lg bg-transparent text-muted text-left min-h-7 text-[13px] hover:bg-subtle hover:text-foreground h-7 font-normal whitespace-nowrap overflow-hidden text-ellipsis [&_em]:ml-auto [&_em]:not-italic [&_em]:text-xs [&_em]:text-accent [&_em]:bg-accent-soft [&_em]:pt-0 [&_em]:pr-1.5 [&_em]:pb-0 [&_em]:pl-1.5 [&_em]:rounded-xl [&_svg]:flex-none hover:bg-[#e5e5e5] hover:text-muted aria-[current=page]:bg-subtle aria-[current=page]:text-foreground aria-[current=page]:font-medium"
-                        data-nav-item=""
-                        aria-label="Workspace More"
-                        aria-haspopup="menu"
-                        aria-controls="workspace-more-menu"
-                      >
-                        <MoreHorizontal size={15} />
-                        <span className="overflow-hidden text-ellipsis">
-                          More
-                        </span>
-                      </button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      align="start"
-                      side="bottom"
-                      sideOffset={6}
-                      id="workspace-more-menu"
-                      role="menu"
-                      data-popover-panel
-                      className="z-50 w-64 max-w-full rounded-[10px] border-line bg-panel p-1.5 text-foreground shadow-(--shadow)"
+                    <UIPopover
+                      open={moreOpen}
+                      onOpenChange={(open) => {
+                        setMoreOpen(open);
+                        if (open) setOrgMenu(false);
+                      }}
                     >
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setMoreOpen(false);
-                          navigate("Members");
-                          setMobile(false);
-                        }}
-                        className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          className="flex items-center gap-2 w-full pt-0 pr-2.25 pb-0 pl-2.25 rounded-lg bg-transparent text-muted text-left min-h-7 text-[13px] hover:bg-subtle hover:text-foreground h-7 font-normal whitespace-nowrap overflow-hidden text-ellipsis [&_em]:ml-auto [&_em]:not-italic [&_em]:text-xs [&_em]:text-accent [&_em]:bg-accent-soft [&_em]:pt-0 [&_em]:pr-1.5 [&_em]:pb-0 [&_em]:pl-1.5 [&_em]:rounded-xl [&_svg]:flex-none hover:bg-[#e5e5e5] hover:text-muted aria-[current=page]:bg-subtle aria-[current=page]:text-foreground aria-[current=page]:font-medium"
+                          data-nav-item=""
+                          aria-label="Workspace More"
+                          aria-haspopup="menu"
+                          aria-controls="workspace-more-menu"
+                        >
+                          <MoreHorizontal size={15} />
+                          <span className="overflow-hidden text-ellipsis">
+                            More
+                          </span>
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        side="bottom"
+                        sideOffset={6}
+                        id="workspace-more-menu"
+                        role="menu"
+                        data-popover-panel
+                        className="z-50 w-64 max-w-full rounded-[10px] border-line bg-panel p-1.5 text-foreground shadow-(--shadow)"
                       >
-                        Members
-                      </button>
-                      <p className="m-0 px-2 py-1.5 text-xs leading-relaxed text-muted">
-                        Customers, team administration and sidebar customization
-                        are not available yet.
-                      </p>
-                    </PopoverContent>
-                  </UIPopover>
-                </div>
-              </nav>
-            </aside>
-          </>
-        )}
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setMoreOpen(false);
+                            navigate("Members");
+                            setMobile(false);
+                          }}
+                          className="flex w-full min-h-9 items-center justify-between gap-2 rounded-lg bg-transparent p-2 text-left text-sm text-inherit hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-2 focus-visible:outline-accent shell-phone:min-h-11"
+                        >
+                          Members
+                        </button>
+                        <p className="m-0 px-2 py-1.5 text-xs leading-relaxed text-muted">
+                          Customers, team administration and sidebar
+                          customization are not available yet.
+                        </p>
+                      </PopoverContent>
+                    </UIPopover>
+                  </div>
+                </nav>
+              </>
+            )}
+          </aside>
+        </>
         <div
           className="min-w-0 flex-1 bg-bg min-h-0 overflow-hidden shell-phone:flex shell-phone:flex-col shell-desktop:col-start-2 shell-desktop:row-start-2 has-data-my-issues-view:row-span-2 has-data-pulse-page:row-span-2 has-data-inbox-page:row-span-2 has-data-initiatives-page:row-span-2 has-data-projects-reference:row-span-2 has-data-project-reference:row-span-2 has-data-workspace-views-page:row-span-2 has-data-mt-page:row-span-2 has-data-settings-page:row-span-2 shell-desktop:data-headerless:row-start-1! shell-desktop:data-headerless:row-span-2"
           data-workspace-content=""
@@ -4574,7 +4627,6 @@ function IssueDetailPage({
 import { InitiativeRoute } from "./initiatives/InitiativeDetail";
 import { PhoneSignInDialog } from "./PhoneSignIn";
 import { InitiativesList } from "./initiatives/InitiativesList";
-import { InitiativeSettings } from "./initiatives/InitiativeSettings";
 import { CreateInitiativeDialog } from "./initiatives/CreateInitiativeDialog";
 import { fetchAllInitiatives, type InitiativeRef } from "./initiatives/api";
 // Local-first helpers for the projects / initiatives / pulse pages (see projectStore.ts).
@@ -13699,1881 +13751,8 @@ function CommandPalette({
   );
 }
 
-/* Panes the reference has and Hoja cannot serve. Every id here is proven backend-less by the
- * live schema introspection recorded in reference/linear/SETTINGS-SPEC.md (Query/Mutation have no
- * field for it) and owns a sub-issue under HOJA-421. Cycles and Extensions are NOT here: the live
- * API answers teamCycleCadenceEnable/cycleUpdate and extensionInstall/extensionUpdate/
- * extensionUninstall, so calling them "missing" would be false.
- * label -> the noun the unavailable pane prints. */
-const SETTINGS_UNAVAILABLE: [string, string, string, string][] = [
-  [
-    "import-export",
-    "Import & export",
-    "No importer/exporter endpoints exist; the CLI is the only bulk path.",
-    "HOJA-493",
-  ],
-  [
-    "usage",
-    "Usage & limits",
-    "The agent ledger is read on the Billing screen; per-seat plan history and rate-limit analytics are not modelled.",
-    "HOJA-495",
-  ],
-];
-
-function SettingsSidebar({
-  workspace,
-  viewer,
-  section,
-  onNavigate,
-  onBack,
-  onLogout,
-  mobile,
-  onCloseMobile,
-}: {
-  workspace: { name: string };
-  viewer: Viewer;
-  section: string;
-  onNavigate: (section: string) => void;
-  onBack: () => void;
-  onLogout: () => void;
-  mobile: boolean;
-  onCloseMobile: () => void;
-}) {
-  const [query, setQuery] = useState("");
-  const panel = useRef<HTMLElement>(null);
-  const close = useRef<HTMLButtonElement>(null);
-  /* The reference nav (38 entries, 7 groups) is inventoried in reference/linear/SETTINGS-SPEC.md.
-   * Hoja renders a group only where it has a screen for at least one entry, and every entry it
-   * cannot serve is present but marked, so the shell never advertises a capability it lacks.
-   * SETTINGS-UNAVAILABLE is filled by scripts/check-settings.mjs: each id there must also have a
-   * Hoja sub-issue describing the backend it needs. */
-  const groups: [
-    string,
-    [
-      string,
-      string,
-      React.ComponentType<{ size?: number; className?: string }>,
-    ][],
-  ][] = [
-    [
-      "Personal",
-      [
-        ["preferences", "Preferences", SlidersHorizontal],
-        ["profile", "Profile", UserRound],
-        ["notifications", "Notifications", Bell],
-        ["api-keys", "Connected apps", KeyRound],
-        ["agent-conversations", "Agent conversations", MessageCircle],
-        ["connections", "Connections", Plug],
-        ["knowledge", "Knowledge", BookOpen],
-      ],
-    ],
-    [
-      "Tasks",
-      [
-        ["issue-labels", "Labels", Tags],
-        ["issue-templates", "Task templates", LayoutTemplate],
-        ["slas", "SLAs", Clock],
-        ["cycles", "Cycles", CalendarDays],
-      ],
-    ],
-    [
-      "Projects",
-      [
-        ["project-statuses", "Project statuses", CircleDot],
-        ["project-templates", "Project templates", Layers3],
-      ],
-    ],
-    ["Initiatives", [["initiatives", "Initiatives", Target]]],
-    [
-      "Administration",
-      [
-        ["workspace", "Workspace", Building2],
-        ["teams", "Teams", Users],
-        ["members", "Members", UserRound],
-        ["permissions", "Permissions", Shield],
-        ["security", "Security", KeyRound],
-        ["billing", "Billing", BarChart3],
-        ["model-providers", "Model providers", Bot],
-        ["extensions", "Extensions", Blocks],
-      ],
-    ],
-    [
-      "Not yet available",
-      SETTINGS_UNAVAILABLE.map(
-        ([id, label]) =>
-          [id, label, Blocks] as [
-            string,
-            string,
-            React.ComponentType<{ size?: number; className?: string }>,
-          ],
-      ),
-    ],
-  ];
-  const isUnavailable = (id: string) =>
-    SETTINGS_UNAVAILABLE.some(([unavailableId]) => unavailableId === id);
-  const filtered = groups
-    .map(
-      ([group, items]) =>
-        [
-          group,
-          items
-            .filter(
-              ([id]) =>
-                ![
-                  "workspace",
-                  "teams",
-                  "members",
-                  "permissions",
-                  "security",
-                  "project-statuses",
-                  "project-templates",
-                  "billing",
-                  "model-providers",
-                  "extensions",
-                ].includes(id) || viewer.admin,
-            )
-            .filter(([, label]) =>
-              `${label} ${group}`
-                .toLowerCase()
-                .includes(query.trim().toLowerCase()),
-            ),
-        ] as [
-          string,
-          [
-            string,
-            string,
-            React.ComponentType<{ size?: number; className?: string }>,
-          ][],
-        ],
-    )
-    .filter(([, items]) => items.length);
-  useEffect(() => {
-    if (!mobile) return;
-    const previous = document.activeElement as HTMLElement | null;
-    close.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onCloseMobile();
-        return;
-      }
-      if (e.key !== "Tab" || !panel.current) return;
-      const items = [
-        ...panel.current.querySelectorAll<HTMLElement>(
-          "button:not(:disabled),input:not(:disabled),a[href]",
-        ),
-      ].filter((el) => el.offsetParent !== null);
-      if (!items.length) return;
-      const first = items[0],
-        last = items[items.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      previous?.focus();
-    };
-  }, [mobile, onCloseMobile]);
-  return (
-    <>
-      <button
-        type="button"
-        className="fixed inset-0 z-40 bg-black/30 opacity-0 pointer-events-none transition-opacity duration-150 motion-reduce:transition-none data-visible:opacity-100 data-visible:pointer-events-auto focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-desktop:hidden"
-        data-settings-drawer-scrim=""
-        data-visible={mobile || undefined}
-        aria-label="Close settings navigation"
-        tabIndex={mobile ? 0 : -1}
-        onClick={onCloseMobile}
-      />
-      <aside
-        ref={panel}
-        className="flex min-h-0 min-w-0 flex-none flex-col overflow-x-hidden overflow-y-hidden bg-sidebar px-3 pt-3 pb-2 text-foreground [font-optical-sizing:auto] shell-desktop:sticky shell-desktop:top-0 shell-desktop:col-start-1 shell-desktop:row-start-1 shell-desktop:h-dvh shell-desktop:max-h-dvh shell-desktop:w-(--ds-settings-nav-width) shell-phone:fixed shell-phone:inset-y-0 shell-phone:left-0 shell-phone:z-50 shell-phone:w-(--ds-settings-nav-drawer-width) shell-phone:max-w-[calc(100vw-3.5rem)] shell-phone:rounded-r-xl shell-phone:bg-sidebar-drawer shell-phone:-translate-x-full shell-phone:shadow-none shell-phone:data-open:translate-x-0 shell-phone:data-open:shadow-2xl shell-phone:transition-transform shell-phone:duration-200 shell-phone:ease-out motion-reduce:transition-none"
-        data-settings-sidebar=""
-        data-open={mobile || undefined}
-        aria-label="Settings navigation"
-        role={mobile ? "dialog" : undefined}
-        aria-modal={mobile || undefined}
-      >
-        <div
-          className="mb-2.5 flex flex-none items-center gap-1"
-          data-settings-sidebar-top=""
-        >
-          <button
-            type="button"
-            className="flex h-(--ds-settings-back-height) min-h-(--ds-settings-back-height) flex-1 items-center gap-1.5 rounded-lg bg-transparent px-2 text-left text-(length:--ds-settings-nav-font-size) font-(--ds-settings-nav-font-weight) text-muted hover:bg-sidebar-hover hover:text-foreground focus-visible:bg-sidebar-hover focus-visible:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11"
-            data-settings-back=""
-            onClick={onBack}
-          >
-            <ArrowLeft size={14} aria-hidden="true" />
-            <span>Back to app</span>
-          </button>
-          <button
-            className="hidden size-11 flex-none place-items-center rounded-lg bg-transparent text-muted hover:bg-sidebar-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:grid"
-            ref={close}
-            type="button"
-            data-settings-drawer-close=""
-            aria-label="Close settings navigation"
-            onClick={onCloseMobile}
-          >
-            <X size={16} aria-hidden="true" />
-          </button>
-        </div>
-        <label
-          className="mb-4 flex min-h-(--ds-settings-search-height) flex-none items-center gap-2 rounded-lg border border-line bg-panel px-2.5 text-muted focus-within:border-foreground/30"
-          data-settings-search=""
-        >
-          <Search
-            size={14}
-            className="flex-none text-sidebar-icon"
-            aria-hidden="true"
-          />
-          <input
-            className="h-(--ds-settings-search-height) min-w-0 w-full border-0 bg-transparent p-0 text-(length:--ds-settings-nav-font-size) text-foreground outline-none placeholder:text-muted shell-phone:min-h-11 shell-phone:text-[16px]"
-            aria-label="Search settings"
-            placeholder="Search…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          {query && (
-            <button
-              className="grid size-6 flex-none place-items-center rounded-md bg-transparent text-muted hover:bg-sidebar-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:size-11"
-              type="button"
-              aria-label="Clear settings search"
-              onClick={() => setQuery("")}
-            >
-              <X size={13} aria-hidden="true" />
-            </button>
-          )}
-        </label>
-        <nav
-          className="block min-h-0 flex-1 overflow-y-auto overscroll-contain pb-2"
-          id="settings-navigation"
-          aria-label="Settings sections"
-        >
-          {filtered.map(([group, items]) => (
-            <div className="mb-4 last:mb-0" data-nav-group="" key={group}>
-              <p className="mb-1 flex items-center px-2 text-xs font-(--ds-settings-nav-font-weight) leading-(--ds-settings-group-label-height) text-muted">
-                {group}
-              </p>
-              <div className="grid gap-px">
-                {items.map(([id, label, Icon]) => (
-                  <button
-                    type="button"
-                    key={id}
-                    className="group relative flex h-(--ds-settings-nav-row-height) min-h-(--ds-settings-nav-row-height) w-full items-center gap-2 overflow-hidden rounded-(--ds-settings-nav-row-radius) border-0 bg-transparent px-2 text-left text-(length:--ds-settings-nav-font-size) font-(--ds-settings-nav-font-weight) text-foreground/85 whitespace-nowrap hover:bg-sidebar-hover hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:text-foreground focus-visible:bg-sidebar-hover focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 data-[availability=unavailable]:cursor-not-allowed data-[availability=unavailable]:opacity-65 data-[availability=unavailable]:hover:bg-transparent data-[availability=unavailable]:hover:text-foreground/85"
-                    data-nav-item=""
-                    aria-current={section === id ? "page" : undefined}
-                    data-nav-id={id}
-                    data-availability={
-                      isUnavailable(id) ? "unavailable" : undefined
-                    }
-                    title={
-                      isUnavailable(id)
-                        ? `${label}: no backend yet (${SETTINGS_UNAVAILABLE.find(([u]) => u === id)?.[3]})`
-                        : undefined
-                    }
-                    onClick={() => {
-                      onNavigate(id);
-                      onCloseMobile();
-                    }}
-                  >
-                    <Icon
-                      size={15}
-                      className="flex-none text-sidebar-icon group-hover:text-foreground group-aria-[current=page]:text-foreground"
-                    />
-                    <span className="min-w-0 flex-1 truncate">{label}</span>
-                    {isUnavailable(id) && (
-                      <span
-                        className="flex-none text-xs font-medium text-muted"
-                        data-settings-nav-state=""
-                      >
-                        Not&nbsp;yet
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-          {!filtered.length && (
-            <div
-              className="mx-2 my-8 grid justify-items-center gap-1.75 text-center text-muted"
-              data-settings-search-empty=""
-            >
-              <Search size={18} aria-hidden="true" />
-              <b className="font-semibold text-foreground">
-                No matching settings
-              </b>
-              <p className="text-xs">
-                Try a different name or clear your search.
-              </p>
-              <button
-                className="bg-transparent px-2 py-1 text-xs text-foreground underline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11"
-                type="button"
-                onClick={() => setQuery("")}
-              >
-                Clear search
-              </button>
-            </div>
-          )}
-        </nav>
-        <div
-          className="mt-auto flex flex-none items-center gap-2 border-t border-line pt-2.5 px-1 text-xs text-foreground"
-          data-sidebar-bottom=""
-        >
-          <span
-            className="grid w-7.25 h-7.25 flex-none place-items-center rounded-[9px]"
-            data-settings-user-avatar=""
-            aria-hidden="true"
-          >
-            <UserBlobatar user={viewer} />
-          </span>
-          <span
-            className="grid min-w-0 flex-1 gap-px"
-            data-settings-user-copy=""
-          >
-            <b className="truncate text-xs font-medium text-foreground">
-              {viewer.name || "Account"}
-            </b>
-            <small className="block truncate text-[11px] font-normal text-muted">
-              {viewer.email || workspace.name}
-            </small>
-          </span>
-          <button
-            className="grid size-7 flex-none place-items-center rounded-lg bg-transparent text-sidebar-icon hover:bg-sidebar-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:size-11"
-            data-logout-button=""
-            onClick={onLogout}
-            aria-label="Log out"
-            title="Log out"
-          >
-            <LogOut size={15} aria-hidden="true" />
-          </button>
-        </div>
-      </aside>
-    </>
-  );
-}
-
-/* Workspace switches (revision 76). Admin-only, like the rest of this page; every member's app
- * reads the result through `workspaceFeatures`. */
-function WorkspaceFeaturesGroup({ hidden }: { hidden: boolean }) {
-  const enabled = useWorkspaceAgentsEnabled();
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-  const change = async (next: boolean) => {
-    const previous = enabled;
-    setBusy(true);
-    setMessage("Saving…");
-    setWorkspaceAgentsEnabled(next);
-    try {
-      const d = await gql(
-        `mutation($on:Boolean!){workspaceFeaturesUpdate(agentsEnabled:$on){agentsEnabled}}`,
-        { on: next },
-      );
-      const saved = Boolean(d.workspaceFeaturesUpdate.agentsEnabled);
-      setWorkspaceAgentsEnabled(saved);
-      setMessage(
-        saved
-          ? "Agents are on for everyone in this workspace."
-          : "Agents are off for this workspace.",
-      );
-    } catch (err) {
-      setWorkspaceAgentsEnabled(previous);
-      setMessage(errorText(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <section
-      className="mb-9 w-full min-w-0 max-w-none border-0 rounded-[10px] bg-(--settings-card) p-0 text-(--settings-ink) shadow-[none] md:mb-9 static grid gap-3.5 border border-line p-4 md:p-7 data-[settings-hidden]:hidden transform-none shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-5 [@media_(max-width:_700px)]:pr-5 [@media_(max-width:_700px)]:pb-5 [@media_(max-width:_700px)]:pl-5 [@media_(max-width:_700px)]:rounded-[13px]"
-      data-settings-group=""
-      data-workspace-features=""
-      data-settings-hidden={hidden ? "" : undefined}
-    >
-      <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em] wrap-break-word">
-        Features
-      </h2>
-      <label
-        className="flex min-h-(--ds-settings-row-height) min-w-0 cursor-pointer flex-row items-center justify-between gap-5 border-t border-line p-(--ds-settings-row-padding) first-of-type:border-t-0 first-of-type:pt-0 last-of-type:pb-0.5 md:gap-5 shell-phone:gap-3 [@media_(max-width:_700px)]:gap-3"
-        data-setting-row=""
-      >
-        <div className="min-w-0 flex-1">
-          <b className="font-[620]">Agents</b>
-          <p>
-            Show the Agents screens (agents, run queue, runners and audit) to
-            everyone in this workspace. Changes are recorded in the audit log.
-          </p>
-        </div>
-        <input
-          className="relative mt-0 mr-0 mb-0 ml-0 h-5.5 w-9.5 flex-none cursor-pointer appearance-none rounded-[999px] border border-line bg-(--settings-subtle) after:absolute after:top-1 after:left-1 after:size-3.5 after:rounded-full after:bg-muted checked:border-foreground checked:bg-foreground checked:after:translate-x-4 checked:after:bg-panel checked:after:transition-transform checked:after:duration-150 checked:after:ease-out motion-reduce:after:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px] [@media_(max-width:_700px)]:w-10.5 [@media_(max-width:_700px)]:h-6"
-          aria-label="Agents"
-          data-setting-switch=""
-          role="switch"
-          type="checkbox"
-          checked={enabled === true}
-          disabled={busy || enabled === null}
-          onChange={(e) => void change(e.target.checked)}
-        />
-      </label>
-      {message && (
-        <p
-          role={
-            message === "Saving…" || message.startsWith("Agents are")
-              ? "status"
-              : "alert"
-          }
-          className="wrap-break-word"
-        >
-          {message}
-        </p>
-      )}
-    </section>
-  );
-}
-function LegacyWorkspaceSettings({
-  workspace,
-  viewer,
-  onSaved,
-  onTeamsChanged,
-  teams,
-  section,
-}: {
-  workspace: { id: string; name: string; urlKey: string };
-  viewer: Viewer;
-  onSaved: (w: { id: string; name: string; urlKey: string }) => void;
-  onTeamsChanged: (teams: Team[]) => void;
-  teams: Team[];
-  section: string;
-}) {
-  const [name, setName] = useState(workspace.name);
-  const [urlKey, setUrlKey] = useState(workspace.urlKey);
-  const [message, setMessage] = useState("");
-  const [teamName, setTeamName] = useState("");
-  const [teamKey, setTeamKey] = useState("");
-  const [teamMessage, setTeamMessage] = useState("");
-  const [teamBusy, setTeamBusy] = useState(false);
-  useEffect(() => {
-    setName(workspace.name);
-    setUrlKey(workspace.urlKey);
-  }, [workspace]);
-  const createTeam = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (teamBusy) return;
-    setTeamBusy(true);
-    setTeamMessage("");
-    try {
-      const d = await gql(
-        `mutation($input:TeamCreateInput!){teamCreate(input:$input){success team{id name key description states{nodes{id name color type}} members{nodes{id name avatarSeed email}} activeCycle{id name number startsAt endsAt progress}}}}`,
-        { input: { name: teamName, key: teamKey } },
-      );
-      if (!d.teamCreate?.success || !d.teamCreate?.team)
-        throw Error("Team creation was rejected");
-      onTeamsChanged([...teams, d.teamCreate.team]);
-      void getSync()?.pull();
-      setTeamName("");
-      setTeamKey("");
-      setTeamMessage(
-        `Created ${d.teamCreate.team.name} (${d.teamCreate.team.key}).`,
-      );
-    } catch (err) {
-      setTeamMessage((err as Error).message);
-    } finally {
-      setTeamBusy(false);
-    }
-  };
-  return (
-    <section
-      className="[--settings-accent:#171717] [--settings-accent-strong:#171717] [--settings-accent-soft:#e9e9e9] [--settings-on-accent:#fff] [--settings-ink:#171717] [--settings-muted:#626262] [--settings-line:#dcdcdc] [--settings-card:#fff] [--settings-subtle:#f0f0f0] [--settings-danger:#242424] [--settings-success:#242424] [:root[data-theme=dark]_&]:[--settings-accent:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-strong:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-soft:#2c2c2c] [:root[data-theme=dark]_&]:[--settings-on-accent:#171717] [:root[data-theme=dark]_&]:[--settings-ink:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-muted:#aaa] [:root[data-theme=dark]_&]:[--settings-line:#353535] [:root[data-theme=dark]_&]:[--settings-card:#1b1b1b] [:root[data-theme=dark]_&]:[--settings-subtle:#262626] [:root[data-theme=dark]_&]:[--settings-danger:#eee] [:root[data-theme=dark]_&]:[--settings-success:#d8d8d8] [font-optical-sizing:auto] ml-auto mr-auto w-[min(100%,var(--ds-settings-column-width))] max-w-(--ds-settings-column-width) min-w-0 p-[var(--ds-settings-column-padding)_var(--ds-settings-column-padding)_64px] text-(--settings-ink) font-(family-name:--hoja-font-ui) md:pt-4 shell-phone:pt-0 [@media_(max-width:_700px)]:pt-0 [@media_(min-width:_881px)]:pl-(--ds-settings-column-padding) [@media_(min-width:_881px)]:pr-(--ds-settings-column-padding) "
-      data-settings-page=""
-      data-settings-wide=""
-    >
-      <header
-        className="mt-0 mr-0 mb-8 ml-0 border-0 p-0 [@media_(max-width:_700px)]:mb-6.75 [@media_(max-width:_700px)]:pb-5"
-        data-settings-page-heading=""
-      >
-        <span className="hidden">
-          {section === "api-keys" ? "Personal" : "Administration"}
-        </span>
-        <h1 className="mt-0 mr-0 mb-2 ml-0 text-(--settings-ink) text-(length:--ds-settings-title-size) font-(--ds-settings-title-weight) leading-(--ds-settings-title-line) tracking-[-.035em] [@media_(max-width:_700px)]:text-(length:--ds-settings-title-size)">
-          {section === "api-keys"
-            ? "Connected apps"
-            : section === "workspace"
-              ? "Workspace"
-              : "Settings"}
-        </h1>
-        <p className="mt-0 mr-0 mb-0 ml-0 max-w-full text-[13px] leading-[1.6] text-(--settings-muted) [@media_(max-width:_700px)]:text-[13px]">
-          {section === "api-keys"
-            ? "Apps signed in as you, API keys for automation, and your browser sessions."
-            : "Manage your workspace identity and create teams for your organization."}
-        </p>
-      </header>
-      <section
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-[10px] bg-(--settings-card) p-0 text-(--settings-ink) shadow-[none] md:mb-9 static grid gap-3.5 border border-line p-4 md:p-7 data-[settings-hidden]:hidden transform-none shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-5 [@media_(max-width:_700px)]:pr-5 [@media_(max-width:_700px)]:pb-5 [@media_(max-width:_700px)]:pl-5 [@media_(max-width:_700px)]:rounded-[13px]"
-        data-settings-group=""
-        data-workspace-settings-form=""
-        data-settings-hidden={!(section === "account") ? "" : undefined}
-      >
-        <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em] wrap-break-word">
-          My account
-        </h2>
-        <p className="wrap-break-word">
-          {viewer.name || "Account"} · {viewer.email || ""}
-        </p>
-        <p className="wrap-break-word">
-          Role: {viewer.admin ? "Workspace admin" : "Member"}
-        </p>
-      </section>
-      {section === "api-keys" && (
-        <ConnectedAppsSettings isAdmin={!!viewer.admin} />
-      )}
-      {viewer.admin && (
-        <>
-          <section
-            className="mb-9 w-full min-w-0 max-w-none border-0 rounded-[10px] bg-(--settings-card) p-0 text-(--settings-ink) shadow-[none] md:mb-9 static grid gap-3.5 border border-line p-4 md:p-7 data-[settings-hidden]:hidden transform-none shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-5 [@media_(max-width:_700px)]:pr-5 [@media_(max-width:_700px)]:pb-5 [@media_(max-width:_700px)]:pl-5 [@media_(max-width:_700px)]:rounded-[13px]"
-            data-settings-group=""
-            data-workspace-settings-form=""
-            data-settings-hidden={!(section === "workspace") ? "" : undefined}
-          >
-            <span className="hidden">Organization</span>
-            <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em] wrap-break-word">
-              Workspace identity
-            </h2>
-            <p className="wrap-break-word">
-              This name and key identify the workspace across Hoja.
-            </p>
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                const previous = workspace;
-                setMessage("Saving…");
-                onSaved({ ...workspace, name, urlKey });
-                try {
-                  const d = await gql(
-                    `mutation($input:WorkspaceUpdateInput!){workspaceUpdate(input:$input){success organization{id name urlKey}}}`,
-                    { input: { name, urlKey } },
-                  );
-                  if (!d.workspaceUpdate.success)
-                    throw Error("Only workspace admins can update settings");
-                  onSaved(d.workspaceUpdate.organization);
-                  setMessage("Workspace settings saved.");
-                } catch (err) {
-                  onSaved(previous);
-                  setMessage(errorText(err));
-                }
-              }}
-            >
-              <label className="min-w-0 text-[12px] wrap-break-word grid gap-1.5">
-                Workspace name
-                <input
-                  className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  required
-                />
-              </label>
-              <label className="min-w-0 text-[12px] wrap-break-word grid gap-1.5">
-                Workspace key
-                <input
-                  className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-                  value={urlKey}
-                  onChange={(e) => setUrlKey(e.target.value)}
-                  required
-                />
-              </label>
-              {message && (
-                <p role="status" className="wrap-break-word">
-                  {message}
-                </p>
-              )}
-              <button className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-4 pr-4 pt-0 pb-0 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]">
-                Save settings
-              </button>
-            </form>
-          </section>
-          <WorkspaceFeaturesGroup hidden={section !== "workspace"} />
-          <form
-            className="mb-9 w-full min-w-0 max-w-none border-0 rounded-[10px] bg-(--settings-card) p-0 text-(--settings-ink) shadow-[none] md:mb-9 static grid gap-3.5 border border-line p-4 md:p-7 data-[settings-hidden]:hidden transform-none shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-5 [@media_(max-width:_700px)]:pr-5 [@media_(max-width:_700px)]:pb-5 [@media_(max-width:_700px)]:pl-5 [@media_(max-width:_700px)]:rounded-[13px]"
-            data-settings-group=""
-            data-workspace-settings-form=""
-            data-settings-hidden={!(section === "workspace") ? "" : undefined}
-            onSubmit={createTeam}
-          >
-            <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em] wrap-break-word">
-              Create team
-            </h2>
-            <label className="min-w-0 text-[12px] grid gap-1.5 font-[550] text-foreground wrap-break-word">
-              Team name
-              <input
-                className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base w-full h-9 pt-0 pr-2.5 pb-0 pl-2.5 max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] [font:inherit]"
-                value={teamName}
-                onChange={(e) => setTeamName(e.target.value)}
-                required
-              />
-            </label>
-            <label className="min-w-0 text-[12px] grid gap-1.5 font-[550] text-foreground wrap-break-word">
-              Team key
-              <input
-                className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base w-full h-9 pt-0 pr-2.5 pb-0 pl-2.5 max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] [font:inherit]"
-                value={teamKey}
-                onChange={(e) => setTeamKey(e.target.value)}
-                required
-                pattern="[A-Za-z0-9]+"
-                title="Use letters and numbers only"
-              />
-            </label>
-            {teamMessage && (
-              <p
-                role={teamMessage.startsWith("Created ") ? "status" : "alert"}
-                className="wrap-break-word"
-              >
-                {teamMessage}
-              </p>
-            )}
-            <button
-              type="submit"
-              className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-4 pr-4 pt-0 pb-0 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none justify-self-start h-9 min-w-35 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
-              disabled={teamBusy || !teamName.trim() || !teamKey.trim()}
-            >
-              {teamBusy ? "Creating…" : "Create team"}
-            </button>
-          </form>
-        </>
-      )}
-    </section>
-  );
-}
-
-type TeamMutate = (
-  layer: Layer<Team>,
-  run: () => Promise<void>,
-) => Promise<void>;
-/* One team card: rename, manage members, archive or delete. Every edit overlays the
- * change on the synced team list first (mutate) and rolls it back if the server says no. */
-function TeamEditor({
-  team,
-  admin,
-  pending,
-  mutate,
-  onChanged,
-  onRemoved,
-  people,
-  issueCount,
-  projectCount,
-}: {
-  team: Team;
-  admin: boolean;
-  pending?: boolean;
-  mutate?: TeamMutate;
-  onChanged: () => Promise<void> | void;
-  onRemoved: () => void;
-  people: { id: string; name?: string; email?: string }[];
-  issueCount: number;
-  projectCount: number;
-}) {
-  const [name, setName] = useState(team.name),
-    [key, setKey] = useState(team.key),
-    [description, setDescription] = useState(team.description || "");
-  const [busy, setBusy] = useState(false),
-    [message, setMessage] = useState(""),
-    [confirmDelete, setConfirmDelete] = useState(false),
-    [confirmText, setConfirmText] = useState(""),
-    [deleteIssues, setDeleteIssues] = useState(false);
-  useEffect(() => {
-    setName(team.name);
-    setKey(team.key);
-    setDescription(team.description || "");
-  }, [team.id, team.name, team.key, team.description]);
-  const members = team.members?.nodes || [];
-  const candidates = people.filter((p) => !members.some((m) => m.id === p.id));
-  const locked = busy || !!pending;
-  const run = async (layer: Layer<Team>, fn: () => Promise<void>) => {
-    if (mutate) return mutate(layer, fn);
-    await fn();
-    await onChanged();
-  };
-  const save = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (locked || !admin) return;
-    if (
-      name.trim() === team.name &&
-      key.trim().toUpperCase() === team.key &&
-      (description || "") === (team.description || "")
-    ) {
-      setMessage("No changes to save.");
-      return;
-    }
-    setMessage("Saving…");
-    const input = {
-      name: name.trim(),
-      key: key.trim().toUpperCase(),
-      description,
-    };
-    try {
-      await run({ id: team.id, patch: input }, async () => {
-        const d = await gql(
-          `mutation($id:String!,$input:TeamUpdateInput!){teamUpdate(id:$id,input:$input){success team{id name key description}}}`,
-          { id: team.id, input },
-        );
-        if (!d.teamUpdate?.success) throw Error("Team could not be updated.");
-      });
-      setMessage("Team saved.");
-    } catch (err) {
-      setMessage(errorText(err));
-    }
-  };
-  const archive = async () => {
-    if (locked || !admin) return;
-    if (
-      !(await confirmDialog(
-        `Archive ${team.name}? It will be hidden from the sidebar and team lists. Its tasks and projects stay.`,
-      ))
-    )
-      return;
-    setMessage("Archiving…");
-    try {
-      await run({ id: team.id, remove: true }, async () => {
-        const d = await gql(
-          `mutation($id:String!){teamArchive(id:$id){success}}`,
-          { id: team.id },
-        );
-        if (!d.teamArchive?.success) throw Error("Team could not be archived.");
-      });
-      onRemoved();
-      setMessage("");
-    } catch (err) {
-      setMessage(errorText(err));
-    }
-  };
-  /* Deleting a team removes what only the team owns: its cycles go with it, its projects
-   * stay in the workspace minus this team, and its issues go when deleteIssues is set. */
-  const remove = async () => {
-    if (locked || !admin || confirmText !== team.key) return;
-    const scope = deleteIssues
-      ? `Permanently delete ${team.name} and the tasks it owns, with their comments and attachments? Tasks that are closed and not loaded on this screen are deleted too.`
-      : `Permanently delete ${team.name}? Its cycles are deleted and its ${projectCount} project${projectCount === 1 ? "" : "s"} stay in the workspace.`;
-    if (!(await confirmDialog(scope, { danger: true }))) return;
-    setMessage("Deleting…");
-    setBusy(true);
-    try {
-      const d = await gql(
-        `mutation($id:String!,$issues:Boolean!){teamDelete(id:$id,deleteIssues:$issues){success}}`,
-        { id: team.id, issues: deleteIssues },
-      );
-      if (!d.teamDelete?.success) throw Error("Team could not be deleted.");
-      onRemoved();
-      setMessage("");
-    } catch (err) {
-      const text = errorText(err);
-      /* The server refuses while the team still owns any work. Ticking the box is the
-       * explicit "delete it anyway" switch: issues go, cycles go, projects stay. */
-      if (!deleteIssues && /still has/i.test(text)) {
-        setDeleteIssues(true);
-        setMessage(
-          `${text} Tick the box below and confirm again: its tasks go with it, its cycles are deleted, and its projects stay in the workspace.`,
-        );
-      } else setMessage(text);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const setMember = async (userId: string, add: boolean) => {
-    if (locked || !admin) return;
-    const person = people.find((p) => p.id === userId);
-    const next = add
-      ? [
-          ...members.filter((m) => m.id !== userId),
-          { id: userId, name: person?.name || "", email: person?.email },
-        ]
-      : members.filter((m) => m.id !== userId);
-    setMessage(add ? "Adding member…" : "Removing member…");
-    try {
-      await run(
-        { id: team.id, patch: { members: { nodes: next } } },
-        async () => {
-          const d = await gql(
-            `mutation($t:String!,$u:String!){${add ? "teamMemberAdd" : "teamMemberRemove"}(teamId:$t,userId:$u){success}}`,
-            { t: team.id, u: userId },
-          );
-          const res = add ? d.teamMemberAdd : d.teamMemberRemove;
-          if (!res?.success)
-            throw Error(
-              add
-                ? "Only workspace admins can add someone to a team."
-                : "Only workspace admins can remove a team member.",
-            );
-        },
-      );
-      setMessage(add ? "Member added." : "Member removed.");
-    } catch (err) {
-      setMessage(errorText(err));
-    }
-  };
-  return (
-    <article
-      className="grid min-w-0 gap-4.5 border-0 border-t border-line bg-transparent pl-0 pr-0 pt-6.75 pb-6.75 rounded-none shadow-[none] last:border-b max-sm:pt-3 max-sm:pr-3 max-sm:pb-3 max-sm:pl-3 [@media_(max-width:560px)]:pt-3.25 [@media_(max-width:560px)]:pr-3.25 [@media_(max-width:560px)]:pb-3.25 [@media_(max-width:560px)]:pl-3.25 [@media_(max-width:_700px)]:pt-4.25 [@media_(max-width:_700px)]:pr-4.25 [@media_(max-width:_700px)]:pb-4.25 [@media_(max-width:_700px)]:pl-4.25 [@media_(max-width:_700px)]:rounded-[13px]"
-      data-team-card=""
-      aria-label={`Team ${team.name}`}
-      aria-busy={pending || undefined}
-    >
-      <header
-        className="flex min-w-0 items-center gap-3"
-        data-team-card-head=""
-      >
-        <span
-          className="grid w-9.75 h-9.75 flex-none place-items-center rounded-[5px] bg-(--settings-accent-soft) text-[11px] font-bold text-(--settings-accent-strong)"
-          data-team-card-mark=""
-          aria-hidden="true"
-        >
-          {(team.key || team.name).slice(0, 2).toUpperCase()}
-        </span>
-        <div className="grid min-w-0 gap-0.5" data-team-card-title="">
-          <b className="font-[550] text-[20px]">{team.name}</b>
-          <small className="text-[11px] leading-normal text-(--settings-muted) wrap-break-word">
-            {team.key} · {members.length} member
-            {members.length === 1 ? "" : "s"} · {issueCount} task
-            {issueCount === 1 ? "" : "s"} · {projectCount} project
-            {projectCount === 1 ? "" : "s"}
-          </small>
-        </div>
-        {pending && (
-          <span className="self-center ml-auto text-muted text-[11px]">
-            Creating…
-          </span>
-        )}
-      </header>
-      {admin ? (
-        <form
-          className="grid min-w-0 grid-cols-1 items-end gap-[14px_12px] rounded-md border border-line bg-(--settings-card) pt-4.5 pr-4.5 pb-4.5 pl-4.5 md:grid-cols-2 md:grid-cols-3"
-          data-team-card-fields=""
-          onSubmit={save}
-        >
-          <label className="min-w-0 text-[11px] grid gap-1.25 text-(--settings-muted)">
-            Name
-            <input
-              className="min-w-0 rounded-lg border border-line bg-(--settings-card) text-[13px] text-(--settings-ink) hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 w-full pt-1.75 pr-2.25 pb-1.75 pl-2.25 disabled:opacity-60 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] disabled:opacity-[.6]"
-              aria-label={`Name for ${team.name}`}
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              disabled={locked}
-            />
-          </label>
-          <label className="min-w-0 text-[11px] grid gap-1.25 text-(--settings-muted)">
-            Key
-            <input
-              className="min-w-0 rounded-lg border border-line bg-(--settings-card) text-[13px] text-(--settings-ink) hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 w-full pt-1.75 pr-2.25 pb-1.75 pl-2.25 disabled:opacity-60 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] disabled:opacity-[.6]"
-              aria-label={`Key for ${team.name}`}
-              required
-              maxLength={8}
-              pattern="[A-Za-z0-9]+"
-              title="Letters and numbers only"
-              value={key}
-              onChange={(e) => setKey(e.target.value.toUpperCase())}
-              disabled={locked}
-            />
-          </label>
-          <label
-            className="col-span-full min-w-0 text-[11px] grid gap-1.25 text-(--settings-muted) md:col-span-1"
-            data-team-card-description=""
-          >
-            Description
-            <input
-              className="min-w-0 rounded-lg border border-line bg-(--settings-card) text-[13px] text-(--settings-ink) hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 w-full pt-1.75 pr-2.25 pb-1.75 pl-2.25 disabled:opacity-60 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] disabled:opacity-[.6]"
-              aria-label={`Description for ${team.name}`}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              disabled={locked}
-            />
-          </label>
-          <div
-            className="col-span-full flex flex-wrap gap-1.75 pt-0.5 [&_[data-control-outline].danger:hover:not(:disabled)]:border-danger"
-            data-team-card-actions=""
-          >
-            <button
-              type="submit"
-              className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-[7px] border border-foreground bg-accent pl-3 pr-3 pt-1.5 pb-1.5 text-[12px] font-[550] text-white shadow-[none] hover:bg-foreground/90 hover:transition-none focus-visible:outline-accent enabled:hover:bg-danger/10 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
-              disabled={locked || !name.trim() || !key.trim()}
-            >
-              {busy ? "Saving…" : "Save team"}
-            </button>
-            <button
-              type="button"
-              className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-[7px] border border-line bg-panel pl-3 pr-3 pt-1.5 pb-1.5 text-[12px] text-inherit hover:bg-subtle hover:transition-none focus-visible:outline-accent enabled:hover:bg-danger/10 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
-              disabled={locked}
-              onClick={() => void archive()}
-            >
-              Archive
-            </button>
-            {!confirmDelete && (
-              <button
-                type="button"
-                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-[7px] border border-line bg-transparent pl-3 pr-3 pt-1.5 pb-1.5 text-[12px] text-danger hover:bg-subtle hover:transition-none focus-visible:outline-accent enabled:hover:bg-danger/10 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
-                disabled={locked}
-                onClick={() => {
-                  setConfirmDelete(true);
-                  setMessage("");
-                }}
-              >
-                Delete team…
-              </button>
-            )}
-          </div>
-        </form>
-      ) : (
-        <p className="mt-0 mr-0 mb-0 ml-0 text-muted text-[12px]">
-          Only workspace admins can edit teams.
-        </p>
-      )}
-      <section
-        className="grid min-w-0 gap-3 border-t border-line pt-5"
-        data-team-card-members=""
-        aria-label={`Members of ${team.name}`}
-      >
-        <div
-          className="flex flex-wrap items-baseline gap-2"
-          data-team-card-members-head=""
-        >
-          <b className="font-semibold text-[12px]">Members</b>
-          <small className="text-[11px] leading-normal text-muted">
-            Assignees must belong to the team.
-          </small>
-        </div>
-        <ul className="flex flex-wrap gap-1.5 mt-0 mr-0 mb-0 ml-0 pt-0 pr-0 pb-0 pl-0 list-none min-w-0">
-          {members.map((m) => (
-            <li
-              key={m.id}
-              className="inline-flex max-w-full items-center gap-1.5 rounded-[99px] border border-line bg-(--settings-subtle) pl-0.75 pr-1 pt-0.75 pb-0.75 text-[12px]"
-              data-team-member=""
-            >
-              <span
-                className="grid w-4.5 h-4.5 flex-none place-items-center rounded-[50%]"
-                data-team-member-avatar=""
-                aria-hidden="true"
-              >
-                <UserBlobatar user={m} />
-              </span>
-              <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-                {m.name || m.email}
-              </span>
-              {admin && (
-                <button
-                  type="button"
-                  className="grid flex-none w-5 h-5 rounded-[50%] bg-transparent text-muted pt-0 pr-0 pb-0 pl-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 [&:hover:not(:disabled)]:bg-subtle [&:hover:not(:disabled)]:text-danger focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                  data-team-member-remove=""
-                  aria-label={`Remove ${m.name || m.email} from ${team.name}`}
-                  title="Remove from team"
-                  disabled={locked}
-                  onClick={() => void setMember(m.id, false)}
-                >
-                  <X size={13} />
-                </button>
-              )}
-            </li>
-          ))}
-          {!members.length && (
-            <li className="pt-1.5 pr-0 pb-1.5 pl-0 text-muted text-[12px]">
-              No members yet. Anyone you add here can be assigned tasks in this
-              team.
-            </li>
-          )}
-        </ul>
-        {admin && (
-          <div
-            className="grid gap-1.25 max-w-[320px] text-muted text-[11px]"
-            data-team-member-add=""
-          >
-            <span
-              className="text-xs font-[560] text-(--settings-muted)"
-              data-settings-field-label=""
-            >
-              Add member
-            </span>
-            <SettingsSelect
-              label={`Add a member to ${team.name}`}
-              value=""
-              disabled={locked || !candidates.length}
-              placeholder={
-                candidates.length
-                  ? "Choose a person…"
-                  : "Everyone is already in this team"
-              }
-              options={candidates.map((p) => ({
-                value: p.id,
-                label: p.name || p.email || "Workspace member",
-                description: p.name ? p.email : "Eligible workspace member",
-                meta: "Add to team",
-              }))}
-              onChange={(id) => {
-                if (id) void setMember(id, true);
-              }}
-            />
-          </div>
-        )}
-      </section>
-      {confirmDelete && (
-        <section
-          className="grid min-w-0 gap-2.5 rounded-[10px] border border-line bg-[color-mix(in_srgb,var(--settings-danger)_5%,var(--settings-card))] pt-3 pr-3 pb-3 pl-3 border-danger/40"
-          data-team-card-delete=""
-          role="group"
-          aria-label={`Delete ${team.name}`}
-        >
-          <p className="mt-0 mr-0 mb-0 ml-0 text-[12px] leading-normal">
-            <b className="font-semibold">Delete {team.name}?</b> Cycles are
-            deleted with the team. Projects stay in the workspace without this
-            team.
-          </p>
-          <label
-            className="flex items-start gap-2 text-[12px] min-w-0"
-            data-team-card-delete-check=""
-          >
-            <input
-              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm size-3.5 accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 mt-0.5 flex-none max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px]"
-              type="checkbox"
-              checked={deleteIssues}
-              onChange={(e) => setDeleteIssues(e.target.checked)}
-              disabled={busy}
-            />{" "}
-            Also delete this team’s tasks ({issueCount} loaded here) with their
-            comments and attachments
-          </label>
-          <label
-            className="grid gap-1.25 max-w-65 text-muted text-[11px] min-w-0"
-            data-team-card-delete-confirm=""
-          >
-            Type {team.key} to confirm
-            <input
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 w-full pt-1.5 pr-2.25 pb-1.5 pl-2.25 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              aria-label={`Confirm delete ${team.name}`}
-              value={confirmText}
-              onChange={(e) => setConfirmText(e.target.value)}
-              disabled={busy}
-            />
-          </label>
-          <div
-            className="col-span-full flex flex-wrap gap-1.75 pt-0.5 [&_[data-control-outline].danger:hover:not(:disabled)]:border-danger"
-            data-team-card-actions=""
-          >
-            <button
-              type="button"
-              className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 border border-danger bg-transparent text-danger min-h-8 pt-1.5 pr-3 pb-1.5 pl-3 rounded-[7px] text-[12px] font-[550] focus-visible:outline-accent enabled:hover:bg-danger/10 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
-              disabled={busy || confirmText !== team.key}
-              onClick={() => void remove()}
-            >
-              {busy ? "Deleting…" : "Permanently delete"}
-            </button>
-            <button
-              type="button"
-              className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-[7px] border border-line bg-panel pl-3 pr-3 pt-1.5 pb-1.5 text-[12px] text-inherit hover:bg-subtle hover:transition-none focus-visible:outline-accent enabled:hover:bg-danger/10 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
-              disabled={busy}
-              onClick={() => {
-                setConfirmDelete(false);
-                setConfirmText("");
-                setDeleteIssues(false);
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-        </section>
-      )}
-      {message && (
-        <p
-          className={
-            (message.endsWith("saved.") ||
-            message.endsWith("added.") ||
-            message.endsWith("removed.")
-              ? "mt-0 mr-0 mb-0 ml-0 text-[12px] text-danger"
-              : "mt-0 mr-0 mb-0 ml-0 text-[12px] text-danger max-w-72") +
-            " text-danger"
-          }
-          data-team-card-message=""
-          role={
-            message.endsWith("saved.") ||
-            message.endsWith("added.") ||
-            message.endsWith("removed.") ||
-            message === "Saving…" ||
-            message === "Adding member…" ||
-            message === "Removing member…" ||
-            message === "Deleting…" ||
-            message === "Archiving…" ||
-            message === "No changes to save."
-              ? "status"
-              : "alert"
-          }
-        >
-          {message}
-        </p>
-      )}
-    </article>
-  );
-}
 let teamPeopleCache: { id: string; name?: string; email?: string }[] | null =
   null;
-// Cycle settings are per team (as in Linear); this is the workspace-level way in.
-function CycleSettingsIndex({
-  teams,
-  onOpen,
-  onBack,
-}: {
-  teams: Team[];
-  onOpen: (team: Team) => void;
-  onBack: () => void;
-}) {
-  return (
-    <section
-      className="[--settings-accent:#171717] [--settings-accent-strong:#171717] [--settings-accent-soft:#e9e9e9] [--settings-on-accent:#fff] [--settings-ink:#171717] [--settings-muted:#626262] [--settings-line:#dcdcdc] [--settings-card:#fff] [--settings-subtle:#f0f0f0] [--settings-danger:#242424] [--settings-success:#242424] [:root[data-theme=dark]_&]:[--settings-accent:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-strong:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-soft:#2c2c2c] [:root[data-theme=dark]_&]:[--settings-on-accent:#171717] [:root[data-theme=dark]_&]:[--settings-ink:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-muted:#aaa] [:root[data-theme=dark]_&]:[--settings-line:#353535] [:root[data-theme=dark]_&]:[--settings-card:#1b1b1b] [:root[data-theme=dark]_&]:[--settings-subtle:#262626] [:root[data-theme=dark]_&]:[--settings-danger:#eee] [:root[data-theme=dark]_&]:[--settings-success:#d8d8d8] [font-optical-sizing:auto] ml-auto mr-auto w-[min(100%,var(--ds-settings-column-width))] max-w-(--ds-settings-column-width) min-w-0 p-[var(--ds-settings-column-padding)_var(--ds-settings-column-padding)_64px] text-(--settings-ink) font-(family-name:--hoja-font-ui) md:pt-4 shell-phone:pt-0 [@media_(max-width:_700px)]:pt-0 [@media_(min-width:_881px)]:pl-(--ds-settings-column-padding) [@media_(min-width:_881px)]:pr-(--ds-settings-column-padding) "
-      data-settings-page=""
-    >
-      <header
-        className="mt-0 mr-0 mb-8 ml-0 border-0 p-0 [@media_(max-width:_700px)]:mb-6.75 [@media_(max-width:_700px)]:pb-5"
-        data-settings-page-heading=""
-      >
-        <button
-          className="hidden focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:mb-3 shell-phone:bg-transparent shell-phone:text-muted"
-          data-settings-mobile-back=""
-          onClick={onBack}
-        >
-          ← Settings
-        </button>
-        <span className="hidden">Tasks</span>
-        <h1 className="mt-0 mr-0 mb-2 ml-0 text-(--settings-ink) text-(length:--ds-settings-title-size) font-(--ds-settings-title-weight) leading-(--ds-settings-title-line) tracking-[-.035em] [@media_(max-width:_700px)]:text-(length:--ds-settings-title-size)">
-          Cycles
-        </h1>
-        <p className="mt-0 mr-0 mb-0 ml-0 max-w-full text-[13px] leading-[1.6] text-(--settings-muted) [@media_(max-width:_700px)]:text-[13px]">
-          Cycles are configured per team: automatic cycles, start day, length,
-          cooldown, auto-complete and automations.
-        </p>
-      </header>
-      <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
-        data-settings-group=""
-      >
-        <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em]">
-          Teams
-        </h2>
-        {teams.length ? (
-          teams.map((team) => (
-            <div
-              key={team.id}
-              className="flex min-h-(--ds-settings-row-height) min-w-0 flex-col items-start justify-between gap-5 border-t border-line p-(--ds-settings-row-padding) first-of-type:border-t-0 first-of-type:pt-0 last-of-type:pb-0.5 md:flex-row md:items-center md:gap-5 shell-phone:gap-3 [@media_(max-width:_700px)]:gap-3"
-              data-setting-row=""
-            >
-              <div>
-                <b className="font-[620]">{team.name}</b>
-                <p>{team.key}</p>
-              </div>
-              <div
-                className="flex w-full max-w-full flex-none flex-wrap gap-1.25 rounded-[10px] border border-line bg-(--settings-subtle) pt-0.75 pr-0.75 pb-0.75 pl-0.75 md:w-auto first:min-w-0 shell-phone:w-full [@media_(max-width:_700px)]:w-full"
-                data-setting-control=""
-              >
-                <button
-                  className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-7.5 flex-1 rounded-(--ui-radius-control) border border-transparent bg-transparent pl-2.5 pr-2.5 text-[12px] text-(--settings-muted) aria-pressed:border-line aria-pressed:bg-panel aria-pressed:text-foreground focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
-                  type="button"
-                  onClick={() => onOpen(team)}
-                >
-                  Cycle settings
-                </button>
-              </div>
-            </div>
-          ))
-        ) : (
-          <p>No teams yet. Create one under Teams.</p>
-        )}
-      </div>
-    </section>
-  );
-}
-function TeamsSettings({
-  teams: teamsProp,
-  onTeamsChanged,
-  viewer,
-}: {
-  teams: Team[];
-  onTeamsChanged: (t: Team[]) => void;
-  viewer: Viewer;
-}) {
-  const [name, setName] = useState("");
-  const [key, setKey] = useState("");
-  const [memberIds, setMemberIds] = useState<string[]>([]);
-  const [people, setPeople] = useState<
-    { id: string; name?: string; email?: string }[]
-  >(() => teamPeopleCache || []);
-  const [error, setError] = useState("");
-  const { teams, push, refresh } = useSyncedTeams(teamsProp, onTeamsChanged);
-  // Per-team issue and project counts, straight from the shared stores (cards stay cheap).
-  const syncedIssues = useSyncIssues();
-  const syncedProjects = useProjects();
-  const issueCounts = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const i of syncedIssues) {
-      const id = i.team?.id;
-      if (id) m.set(id, (m.get(id) || 0) + 1);
-    }
-    return m;
-  }, [syncedIssues]);
-  const projectCounts = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const p of syncedProjects)
-      for (const t of p.teams?.nodes || []) m.set(t.id, (m.get(t.id) || 0) + 1);
-    return m;
-  }, [syncedProjects]);
-  const peopleVersion = useEntityVersion(["member", "user"]);
-  useEffect(() => {
-    let live = true;
-    gql(
-      "query TeamPeople{organizationMembers(first:100){nodes{id name email active}}}",
-    )
-      .then((d) => {
-        if (!live) return;
-        const active = d.organizationMembers.nodes.filter(
-          (m: { active?: boolean }) => m.active !== false,
-        );
-        teamPeopleCache = active;
-        setPeople(active);
-      })
-      .catch((e) => {
-        if (live) setError(errorText(e));
-      });
-    return () => {
-      live = false;
-    };
-  }, [peopleVersion]);
-  const reload = () => refresh();
-  // Optimistic team edit: overlay now, keep it until the sync pull has the server's version; roll back on failure.
-  const mutate: TeamMutate = async (layer, run) => {
-    setError("");
-    const handle = push(layer);
-    try {
-      await run();
-      handle.settleAfter(refresh());
-    } catch (e) {
-      handle.drop();
-      if (layer.remove) setError(errorText(e));
-      throw e;
-    }
-  };
-  const create = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    const input = {
-      name: name.trim(),
-      key: key.trim().toUpperCase(),
-      memberIds,
-    };
-    const tempId = `pending-team-${input.key}-${Date.now()}`;
-    const placeholder: Team = {
-      id: tempId,
-      name: input.name,
-      key: input.key,
-      states: { nodes: [] },
-      members: {
-        nodes: people
-          .filter((p) => memberIds.includes(p.id))
-          .map((p) => ({ id: p.id, name: p.name || "", email: p.email })),
-      },
-    };
-    setName("");
-    setKey("");
-    setMemberIds([]);
-    try {
-      await mutate(
-        {
-          id: tempId,
-          add: placeholder,
-          replacedBy: (t) => t.key === input.key,
-        },
-        async () => {
-          const d = await gql(
-            "mutation($input:TeamCreateInput!){teamCreate(input:$input){success team{id key}}}",
-            { input },
-          );
-          if (!d.teamCreate?.success) throw Error("Could not create team");
-        },
-      );
-    } catch (err) {
-      setName(input.name);
-      setKey(input.key);
-      setMemberIds(input.memberIds);
-      setError(errorText(err));
-    }
-  };
-  return (
-    <section
-      className="[--settings-accent:#171717] [--settings-accent-strong:#171717] [--settings-accent-soft:#e9e9e9] [--settings-on-accent:#fff] [--settings-ink:#171717] [--settings-muted:#626262] [--settings-line:#dcdcdc] [--settings-card:#fff] [--settings-subtle:#f0f0f0] [--settings-danger:#242424] [--settings-success:#242424] [:root[data-theme=dark]_&]:[--settings-accent:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-strong:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-soft:#2c2c2c] [:root[data-theme=dark]_&]:[--settings-on-accent:#171717] [:root[data-theme=dark]_&]:[--settings-ink:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-muted:#aaa] [:root[data-theme=dark]_&]:[--settings-line:#353535] [:root[data-theme=dark]_&]:[--settings-card:#1b1b1b] [:root[data-theme=dark]_&]:[--settings-subtle:#262626] [:root[data-theme=dark]_&]:[--settings-danger:#eee] [:root[data-theme=dark]_&]:[--settings-success:#d8d8d8] [font-optical-sizing:auto] ml-auto mr-auto w-[min(100%,var(--ds-settings-column-width))] max-w-(--ds-settings-column-width) min-w-0 p-[var(--ds-settings-column-padding)_var(--ds-settings-column-padding)_64px] text-(--settings-ink) font-(family-name:--hoja-font-ui) md:pt-4 shell-phone:pt-0 [@media_(max-width:_700px)]:pt-0 [@media_(min-width:_881px)]:pl-(--ds-settings-column-padding) [@media_(min-width:_881px)]:pr-(--ds-settings-column-padding) "
-      data-settings-page=""
-      data-settings-wide=""
-    >
-      <header
-        className="mt-0 mr-0 mb-8 ml-0 border-0 p-0 [@media_(max-width:_700px)]:mb-6.75 [@media_(max-width:_700px)]:pb-5"
-        data-settings-page-heading=""
-      >
-        <span className="hidden">Administration</span>
-        <h1 className="mt-0 mr-0 mb-2 ml-0 text-(--settings-ink) text-(length:--ds-settings-title-size) font-(--ds-settings-title-weight) leading-(--ds-settings-title-line) tracking-[-.035em] [@media_(max-width:_700px)]:text-(length:--ds-settings-title-size)">
-          Teams
-        </h1>
-        <p className="mt-0 mr-0 mb-0 ml-0 max-w-full text-[13px] leading-[1.6] text-(--settings-muted) [@media_(max-width:_700px)]:text-[13px]">
-          Shape how your organization works. Manage team identity, membership,
-          and lifecycle in one place.
-        </p>
-      </header>
-      {viewer.admin && (
-        <form
-          className="mb-9 w-full min-w-0 max-w-none border-0 rounded-[10px] bg-(--settings-card) pt-7 pr-7 pb-7 pl-7 text-(--settings-ink) shadow-[none] md:mb-9 static grid gap-3.5 border border-line md:p-7 transform-none shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-5 [@media_(max-width:_700px)]:pr-5 [@media_(max-width:_700px)]:pb-5 [@media_(max-width:_700px)]:pl-5 [@media_(max-width:_700px)]:rounded-[13px]"
-          data-settings-group=""
-          data-workspace-settings-form=""
-          onSubmit={create}
-        >
-          <span className="hidden">Team setup</span>
-          <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em] wrap-break-word">
-            Create a new team
-          </h2>
-          <p
-            className="mt-1.5 mb-5 max-w-147.5 text-[13px] leading-[1.55] text-(--settings-muted) wrap-break-word"
-            data-settings-section-intro=""
-          >
-            Give the team a clear identity and choose its initial members.
-          </p>
-          <div
-            className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-4 [@media_(max-width:_700px)]:gap-3.5"
-            data-settings-form-grid=""
-          >
-            <label className="min-w-0 text-xs wrap-break-word grid gap-1.5">
-              Name
-              <input
-                className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </label>
-            <label className="min-w-0 text-xs wrap-break-word grid gap-1.5">
-              Key
-              <input
-                className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-                required
-                maxLength={8}
-                pattern="[A-Za-z0-9]+"
-                value={key}
-                onChange={(e) => setKey(e.target.value)}
-                placeholder="ENG"
-              />
-            </label>
-            <fieldset className="col-span-full rounded-[10px] border border-line pt-3 pr-3.5 pb-3 pl-3.5 grid gap-2 mt-0 mr-0 mb-0 ml-0">
-              <legend className="pl-1.5 pr-1.5 text-[12px] text-muted pt-0 pb-0 font-[550]">
-                Members
-              </legend>
-              {people.map((p) => (
-                <label
-                  className="min-w-0 text-[13px] flex items-center gap-2 text-foreground flex-row justify-start w-auto justify-self-start wrap-break-word pointer-coarse:min-h-11"
-                  key={p.id}
-                >
-                  <input
-                    className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm size-3.5 accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 w-4 h-4 mt-0 mr-0 mb-0 ml-0 flex-none max-md:text-base max-w-full placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px]"
-                    type="checkbox"
-                    checked={memberIds.includes(p.id)}
-                    onChange={(e) =>
-                      setMemberIds((c) =>
-                        e.target.checked
-                          ? [...c, p.id]
-                          : c.filter((x) => x !== p.id),
-                      )
-                    }
-                  />{" "}
-                  {p.name || p.email}
-                </label>
-              ))}
-            </fieldset>
-          </div>
-          <div
-            className="mt-4.5 flex flex-col items-start gap-3.5 md:flex-row md:items-center md:gap-3.5 [@media_(max-width:_700px)]:gap-2.25"
-            data-settings-form-actions=""
-          >
-            <button className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]">
-              Create team
-            </button>
-            <span>Team keys use letters and numbers.</span>
-          </div>
-        </form>
-      )}
-      {error && (
-        <p
-          className="block text-(--settings-danger) mt-3 mr-0 mb-3 ml-0 max-w-72 text-xs "
-          role="alert"
-        >
-          {error}
-        </p>
-      )}
-      <div className="grid min-w-0 gap-4.5" data-team-card-list="">
-        {teams.length ? (
-          teams.map((t) => (
-            <TeamEditor
-              key={t.id}
-              team={t}
-              admin={!!viewer.admin}
-              pending={t.id.startsWith("pending-team-")}
-              mutate={mutate}
-              people={people}
-              issueCount={issueCounts.get(t.id) || 0}
-              projectCount={projectCounts.get(t.id) || 0}
-              onChanged={() => reload()}
-              onRemoved={() => void reload()}
-            />
-          ))
-        ) : (
-          <p
-            className="mt-0 mr-0 mb-0 ml-0 pt-4.5 pr-4.5 pb-4.5 pl-4.5 rounded-xl text-muted text-[13px] border border-dashed border-line"
-            data-team-card-empty=""
-          >
-            No teams yet. Create one above to start tracking work.
-          </p>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function WorkspaceSettings({
-  workspace,
-  viewer,
-  onSaved,
-  onProfileSaved,
-  onTeamsChanged,
-  teams,
-  section,
-  theme,
-  onTheme,
-  onFontScale,
-  fontScale,
-  preferenceMessage,
-  onBack,
-  onOpenCycleSettings,
-}: {
-  workspace: { id: string; name: string; urlKey: string };
-  viewer: Viewer;
-  onSaved: (w: { id: string; name: string; urlKey: string }) => void;
-  onProfileSaved: (name: string) => void;
-  onTeamsChanged: (teams: Team[]) => void;
-  teams: Team[];
-  section: string;
-  theme: string;
-  onTheme: (theme: string) => void;
-  onFontScale: (scale: string) => void;
-  fontScale: string;
-  preferenceMessage: string;
-  onBack: () => void;
-  onOpenCycleSettings: (team: Team) => void;
-}) {
-  if (section === "initiatives")
-    return <InitiativeSettings viewer={viewer} teams={teams} />;
-  if (section === "cycles")
-    return (
-      <CycleSettingsIndex
-        teams={teams}
-        onOpen={onOpenCycleSettings}
-        onBack={onBack}
-      />
-    );
-  if (section === "preferences")
-    return (
-      <section
-        className="[--settings-accent:#171717] [--settings-accent-strong:#171717] [--settings-accent-soft:#e9e9e9] [--settings-on-accent:#fff] [--settings-ink:#171717] [--settings-muted:#626262] [--settings-line:#dcdcdc] [--settings-card:#fff] [--settings-subtle:#f0f0f0] [--settings-danger:#242424] [--settings-success:#242424] [:root[data-theme=dark]_&]:[--settings-accent:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-strong:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-soft:#2c2c2c] [:root[data-theme=dark]_&]:[--settings-on-accent:#171717] [:root[data-theme=dark]_&]:[--settings-ink:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-muted:#aaa] [:root[data-theme=dark]_&]:[--settings-line:#353535] [:root[data-theme=dark]_&]:[--settings-card:#1b1b1b] [:root[data-theme=dark]_&]:[--settings-subtle:#262626] [:root[data-theme=dark]_&]:[--settings-danger:#eee] [:root[data-theme=dark]_&]:[--settings-success:#d8d8d8] [font-optical-sizing:auto] ml-auto mr-auto w-[min(100%,var(--ds-settings-column-width))] max-w-(--ds-settings-column-width) min-w-0 p-[var(--ds-settings-column-padding)_var(--ds-settings-column-padding)_64px] text-(--settings-ink) font-(family-name:--hoja-font-ui) md:pt-4 shell-phone:pt-0 [@media_(max-width:_700px)]:pt-0 [@media_(min-width:_881px)]:pl-(--ds-settings-column-padding) [@media_(min-width:_881px)]:pr-(--ds-settings-column-padding) "
-        data-settings-page=""
-      >
-        <header
-          className="mt-0 mr-0 mb-8 ml-0 border-0 p-0 [@media_(max-width:_700px)]:mb-6.75 [@media_(max-width:_700px)]:pb-5"
-          data-settings-page-heading=""
-        >
-          <button
-            className="hidden focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:mb-3 shell-phone:bg-transparent shell-phone:text-muted"
-            data-settings-mobile-back=""
-            onClick={onBack}
-          >
-            ← Settings
-          </button>
-          <span className="hidden">{workspace.name} · Settings</span>
-          <h1 className="mt-0 mr-0 mb-2 ml-0 text-(--settings-ink) text-(length:--ds-settings-title-size) font-(--ds-settings-title-weight) leading-(--ds-settings-title-line) tracking-[-.035em] [@media_(max-width:_700px)]:text-(length:--ds-settings-title-size)">
-            Preferences
-          </h1>
-          <p className="mt-0 mr-0 mb-0 ml-0 max-w-full text-[13px] leading-[1.6] text-(--settings-muted) [@media_(max-width:_700px)]:text-[13px]">
-            Appearance preferences are saved to your account and follow you
-            across devices.
-          </p>
-        </header>
-        <div
-          className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
-          data-settings-group=""
-        >
-          <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em]">
-            Appearance
-          </h2>
-          {preferenceMessage && (
-            <p
-              role={
-                preferenceMessage.startsWith("Could not") ? "alert" : "status"
-              }
-            >
-              {preferenceMessage}
-            </p>
-          )}
-          <div
-            className="flex min-h-(--ds-settings-row-height) min-w-0 flex-col items-start justify-between gap-5 border-t border-line p-(--ds-settings-row-padding) first-of-type:border-t-0 first-of-type:pt-0 last-of-type:pb-0.5 md:flex-col md:items-start md:gap-5 shell-phone:gap-3 [@media_(max-width:_700px)]:gap-3"
-            data-setting-row=""
-            data-style-hooks="settings-theme-row"
-          >
-            <div>
-              <b className="font-[620]">Theme</b>
-              <p>Choose the appearance used in this browser.</p>
-              <small className="text-[10px] leading-normal text-(--settings-muted)">
-                Saved to your account
-              </small>
-            </div>
-            <div
-              className="flex w-[min(100%,560px)] max-w-full flex-none flex-wrap gap-3.5 rounded-[10px] border border-line bg-transparent pt-0 pr-0 pb-0 pl-0 md:w-full flex-row border-0 first:min-w-0 shell-phone:w-full [@media_(max-width:_700px)]:w-full"
-              data-setting-control=""
-              data-theme-control=""
-              data-style-hooks="settings-theme-control"
-            >
-              <button
-                disabled={preferenceMessage === "Saving…"}
-                onClick={() => onTheme("light")}
-                aria-pressed={theme === "light"}
-                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 grid min-w-0 flex-1 grid-cols-2 overflow-hidden rounded-lg border border-line bg-(--settings-card) pt-0 pr-0 pb-0 pl-0 text-left text-(--settings-accent-strong) aria-pressed:border-foreground aria-pressed:ring-1 aria-pressed:ring-foreground focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5] [@media_(max-width:_700px)]:min-w-0 max-md:grid-cols-1"
-              >
-                <span
-                  className="col-span-full grid h-23 grid-cols-[5px_minmax(0,1fr)] grid-rows-[10px_8px_8px] gap-2 bg-[#e9e9e9] pt-4.5 pr-4.5 pb-4.5 pl-4.5 [@media_(max-width:_700px)]:h-18 [@media_(max-width:_700px)]:pt-3.25 [@media_(max-width:_700px)]:pr-3.25 [@media_(max-width:_700px)]:pb-3.25 [@media_(max-width:_700px)]:pl-3.25 [@media_(max-width:_390px)]:h-20.5"
-                  data-theme-choice-preview=""
-                  aria-hidden="true"
-                >
-                  <i className="block rounded-xs bg-[#b7b7b7] first:row-span-3 first:bg-neutral-600 first:bg-[#555]" />
-                  <i className="block rounded-xs bg-[#b7b7b7] first:row-span-3 first:bg-neutral-600 first:bg-[#555]" />
-                  <i className="block rounded-xs bg-[#b7b7b7] first:row-span-3 first:bg-neutral-600 first:bg-[#555]" />
-                </span>
-                <span
-                  className="grid gap-0.75 pt-3.25 pr-3.5 pb-3.25 pl-3.5 text-left [@media_(max-width:_700px)]:pt-2.75 [@media_(max-width:_700px)]:pr-2.75 [@media_(max-width:_700px)]:pb-2.75 [@media_(max-width:_700px)]:pl-2.75"
-                  data-theme-choice-copy=""
-                >
-                  <b className="font-[620]">Light</b>
-                  <small className="text-[10px] leading-normal text-(--settings-muted)">
-                    Bright and clear
-                  </small>
-                </span>
-                <Sun
-                  className="mr-3 hidden self-center justify-self-end text-muted md:block"
-                  size={16}
-                />
-              </button>
-              <button
-                disabled={preferenceMessage === "Saving…"}
-                onClick={() => onTheme("dark")}
-                aria-pressed={theme === "dark"}
-                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 grid min-w-0 flex-1 grid-cols-2 overflow-hidden rounded-lg border border-line bg-(--settings-card) pt-0 pr-0 pb-0 pl-0 text-left text-(--settings-accent-strong) aria-pressed:border-foreground aria-pressed:ring-1 aria-pressed:ring-foreground focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5] [@media_(max-width:_700px)]:min-w-0 max-md:grid-cols-1"
-              >
-                <span
-                  className="col-span-full grid h-23 grid-cols-[5px_minmax(0,1fr)] grid-rows-[10px_8px_8px] gap-2 bg-[#202020] pt-4.5 pr-4.5 pb-4.5 pl-4.5 [@media_(max-width:_700px)]:h-18 [@media_(max-width:_700px)]:pt-3.25 [@media_(max-width:_700px)]:pr-3.25 [@media_(max-width:_700px)]:pb-3.25 [@media_(max-width:_700px)]:pl-3.25 [@media_(max-width:_390px)]:h-20.5"
-                  data-theme-choice-preview=""
-                  aria-hidden="true"
-                >
-                  <i className="block rounded-xs bg-[#707070] first:row-span-3 first:bg-neutral-600 first:bg-[#eee]" />
-                  <i className="block rounded-xs bg-[#707070] first:row-span-3 first:bg-neutral-600 first:bg-[#eee]" />
-                  <i className="block rounded-xs bg-[#707070] first:row-span-3 first:bg-neutral-600 first:bg-[#eee]" />
-                </span>
-                <span
-                  className="grid gap-0.75 pt-3.25 pr-3.5 pb-3.25 pl-3.5 text-left [@media_(max-width:_700px)]:pt-2.75 [@media_(max-width:_700px)]:pr-2.75 [@media_(max-width:_700px)]:pb-2.75 [@media_(max-width:_700px)]:pl-2.75"
-                  data-theme-choice-copy=""
-                >
-                  <b className="font-[620]">Dark</b>
-                  <small className="text-[10px] leading-normal text-(--settings-muted)">
-                    Low-light focus
-                  </small>
-                </span>
-                <Moon
-                  className="mr-3 hidden self-center justify-self-end text-muted md:block"
-                  size={16}
-                />
-              </button>
-            </div>
-          </div>
-          <div
-            className="flex min-h-(--ds-settings-row-height) min-w-0 flex-col items-start justify-between gap-5 border-t border-line p-(--ds-settings-row-padding) first-of-type:border-t-0 first-of-type:pt-0 last-of-type:pb-0.5 md:flex-row md:items-center md:gap-5 shell-phone:gap-3 [@media_(max-width:_700px)]:gap-3"
-            data-setting-row=""
-          >
-            <div>
-              <b className="font-[620]">Font size</b>
-              <p>Adjust interface text size.</p>
-              <small className="text-[10px] leading-normal text-(--settings-muted)">
-                Saved to your account
-              </small>
-            </div>
-            <SettingsSelect
-              label="Font size"
-              value={fontScale}
-              disabled={preferenceMessage === "Saving…"}
-              options={[
-                {
-                  value: "90",
-                  label: "Compact",
-                  description: "Denser interface text for smaller screens",
-                  meta: "90%",
-                },
-                {
-                  value: "100",
-                  label: "Default",
-                  description: "The balanced Hoja reading size",
-                  meta: "100%",
-                },
-                {
-                  value: "110",
-                  label: "Large",
-                  description: "Larger text across the workspace",
-                  meta: "110%",
-                },
-              ]}
-              onChange={onFontScale}
-            />
-          </div>
-        </div>
-      </section>
-    );
-  if (section === "profile")
-    return <ProfileSettings viewer={viewer} onSaved={onProfileSaved} />;
-  if (section === "notifications") return <NotificationSettings />;
-  if (section === "model-providers")
-    return viewer.admin ? (
-      <ModelProvidersSettings />
-    ) : (
-      <SettingsNotFound onBack={onBack} />
-    );
-  if (section === "extensions")
-    return viewer.admin ? (
-      <ExtensionsSettings />
-    ) : (
-      <SettingsNotFound onBack={onBack} />
-    );
-  if (section === "agent-conversations") return <AgentConversationsSettings />;
-  if (section === "connections")
-    return <ConnectorsSettings isAdmin={!!viewer.admin} />;
-  if (section === "knowledge") return <KnowledgeSettings />;
-  if (section === "teams")
-    return (
-      <TeamsSettings
-        teams={teams}
-        onTeamsChanged={onTeamsChanged}
-        viewer={viewer}
-      />
-    );
-  if (section === "issue-labels")
-    return <IssueLabelsSettings viewer={viewer} />;
-  if (section === "issue-templates")
-    return viewer.admin ? (
-      <TaskTemplatesSettings teams={teams} />
-    ) : (
-      <SettingsNotFound onBack={onBack} />
-    );
-  if (section === "billing")
-    return viewer.admin ? (
-      <BillingUsageSettings />
-    ) : (
-      <SettingsNotFound onBack={onBack} />
-    );
-  if (section === "slas")
-    return viewer.admin ? (
-      <SlaSettings teams={teams} />
-    ) : (
-      <SettingsNotFound onBack={onBack} />
-    );
-  if (section === "project-statuses")
-    return viewer.admin ? (
-      <ProjectStatusesSettings />
-    ) : (
-      <SettingsNotFound onBack={onBack} />
-    );
-  if (section === "project-templates")
-    return viewer.admin ? (
-      <ProjectTemplatesSettings teams={teams} />
-    ) : (
-      <SettingsNotFound onBack={onBack} />
-    );
-  if (section === "permissions")
-    return viewer.admin ? (
-      <PermissionsSettings />
-    ) : (
-      <SettingsNotFound onBack={onBack} />
-    );
-  if (section === "security")
-    return viewer.admin ? (
-      <SecuritySettings />
-    ) : (
-      <SettingsNotFound onBack={onBack} />
-    );
-  const unavailable = SETTINGS_UNAVAILABLE.find(([id]) => id === section);
-  if (unavailable)
-    return (
-      <SettingsUnavailable
-        name={unavailable[1]}
-        needs={unavailable[2]}
-        issue={unavailable[3]}
-        onBack={onBack}
-      />
-    );
-  if (["account", "api-keys", "workspace", "members"].includes(section))
-    return (
-      <LegacyWorkspaceSettings
-        workspace={workspace}
-        viewer={viewer}
-        onSaved={onSaved}
-        onTeamsChanged={onTeamsChanged}
-        teams={teams}
-        section={section}
-      />
-    );
-  return <SettingsNotFound onBack={onBack} />;
-}
-function ProfileSettings({
-  viewer,
-  onSaved,
-}: {
-  viewer: Viewer;
-  onSaved: (name: string) => void;
-}) {
-  const [name, setName] = useState(viewer.name || ""),
-    [message, setMessage] = useState(""),
-    [busy, setBusy] = useState(false);
-  const saving = useRef(false);
-  useEffect(() => {
-    if (!saving.current) setName(viewer.name || "");
-  }, [viewer.name]);
-  // The new name shows across the app at once; it is restored if the server refuses it.
-  const save = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const previous = viewer.name || "";
-    const next = name;
-    setBusy(true);
-    saving.current = true;
-    setMessage("Saving…");
-    onSaved(next);
-    try {
-      const d = await gql(
-        `mutation($name:String!){profileNameUpdate(name:$name){success user{id name avatarSeed displayName email admin}}}`,
-        { name: next },
-      );
-      if (!d.profileNameUpdate.success)
-        throw Error("Name must be 1–80 characters.");
-      onSaved(d.profileNameUpdate.user.name);
-      setMessage("Profile name saved.");
-    } catch (e) {
-      onSaved(previous);
-      setMessage(errorText(e));
-    } finally {
-      saving.current = false;
-      setBusy(false);
-    }
-  };
-  return (
-    <section
-      className="[--settings-accent:#171717] [--settings-accent-strong:#171717] [--settings-accent-soft:#e9e9e9] [--settings-on-accent:#fff] [--settings-ink:#171717] [--settings-muted:#626262] [--settings-line:#dcdcdc] [--settings-card:#fff] [--settings-subtle:#f0f0f0] [--settings-danger:#242424] [--settings-success:#242424] [:root[data-theme=dark]_&]:[--settings-accent:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-strong:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-soft:#2c2c2c] [:root[data-theme=dark]_&]:[--settings-on-accent:#171717] [:root[data-theme=dark]_&]:[--settings-ink:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-muted:#aaa] [:root[data-theme=dark]_&]:[--settings-line:#353535] [:root[data-theme=dark]_&]:[--settings-card:#1b1b1b] [:root[data-theme=dark]_&]:[--settings-subtle:#262626] [:root[data-theme=dark]_&]:[--settings-danger:#eee] [:root[data-theme=dark]_&]:[--settings-success:#d8d8d8] [font-optical-sizing:auto] ml-auto mr-auto w-[min(100%,var(--ds-settings-column-width))] max-w-(--ds-settings-column-width) min-w-0 p-[var(--ds-settings-column-padding)_var(--ds-settings-column-padding)_64px] text-(--settings-ink) font-(family-name:--hoja-font-ui) md:pt-4 shell-phone:pt-0 [@media_(max-width:_700px)]:pt-0 [@media_(min-width:_881px)]:pl-(--ds-settings-column-padding) [@media_(min-width:_881px)]:pr-(--ds-settings-column-padding) "
-      data-settings-page=""
-    >
-      <header
-        className="mt-0 mr-0 mb-8 ml-0 border-0 p-0 [@media_(max-width:_700px)]:mb-6.75 [@media_(max-width:_700px)]:pb-5"
-        data-settings-page-heading=""
-      >
-        <span className="hidden">Personal</span>
-        <h1 className="mt-0 mr-0 mb-2 ml-0 text-(--settings-ink) text-(length:--ds-settings-title-size) font-(--ds-settings-title-weight) leading-(--ds-settings-title-line) tracking-[-.035em] [@media_(max-width:_700px)]:text-(length:--ds-settings-title-size)">
-          Profile
-        </h1>
-        <p className="mt-0 mr-0 mb-0 ml-0 max-w-full text-[13px] leading-[1.6] text-(--settings-muted) [@media_(max-width:_700px)]:text-[13px]">
-          Update your name. Email is managed by your sign-in identity.
-        </p>
-      </header>
-      <form
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-[7px] bg-(--settings-card) pt-7 pr-7 pb-7 pl-7 text-(--settings-ink) shadow-[none] md:mb-9 border border-line md:p-7 shell-phone:pt-3.75 shell-phone:pr-3.75 shell-phone:pb-3.75 shell-phone:pl-3.75 [@media_(max-width:_700px)]:mb-7 [@media_(max-width:_700px)]:pt-4.75 [@media_(max-width:_700px)]:pr-4.25 [@media_(max-width:_700px)]:pb-4.75 [@media_(max-width:_700px)]:pl-4.25 [@media_(max-width:_700px)]:rounded-[13px]"
-        data-settings-group=""
-        data-profile-form=""
-        onSubmit={save}
-      >
-        <div
-          className="mb-5.75 flex flex-wrap items-start gap-3 border-b border-line pb-5 md:items-center"
-          data-profile-summary=""
-        >
-          <span
-            className="grid w-10.75 h-10.75 flex-none place-items-center rounded-[50%]"
-            data-profile-avatar=""
-            aria-hidden="true"
-          >
-            <UserBlobatar user={viewer} />
-          </span>
-          <div className="min-w-0 flex-1 basis-40">
-            <b className="font-semibold">{viewer.name || "Your profile"}</b>
-            <p className="mt-0.75 mb-0 wrap-anywhere text-[12px] text-(--settings-muted)">
-              {viewer.email}
-            </p>
-          </div>
-          <span
-            className="inline-flex w-fit min-h-6.25 items-center whitespace-nowrap rounded-[999px] border border-line bg-(--settings-subtle) pl-2 pr-2 pt-0.5 pb-0.5 text-[11px] font-semibold text-(--settings-muted) [@media_(max-width:_700px)]:ml-13.75"
-            data-settings-badge=""
-          >
-            {viewer.admin ? "Workspace admin" : "Member"}
-          </span>
-        </div>
-        <div
-          className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-4 [@media_(max-width:_700px)]:gap-3.5"
-          data-settings-form-grid=""
-        >
-          <label className="min-w-0 text-xs grid gap-1.5">
-            Display name
-            <input
-              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-              aria-label="Profile display name"
-              required
-              maxLength={80}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </label>
-          <label className="min-w-0 text-xs grid gap-1.5">
-            Email
-            <input
-              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-              aria-label="Profile email"
-              readOnly
-              value={viewer.email || ""}
-            />
-          </label>
-          {message && (
-            <p
-              role={
-                message.includes("saved") || message === "Saving…"
-                  ? "status"
-                  : "alert"
-              }
-            >
-              {message}
-            </p>
-          )}
-        </div>
-        <div
-          className="mt-4.5 flex flex-col items-start gap-3.5 md:flex-row md:items-center md:gap-3.5 [@media_(max-width:_700px)]:gap-2.25"
-          data-settings-form-actions=""
-        >
-          <button
-            className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
-            disabled={busy || !name.trim()}
-          >
-            {busy ? "Saving…" : "Save profile"}
-          </button>
-          <span>Your email is managed by your sign-in identity.</span>
-        </div>
-      </form>
-    </section>
-  );
-}
 const NOTIFICATION_GROUPS = [
   [
     "Tasks",
@@ -15694,482 +13873,13 @@ const readNotificationPrefs = (
   return next;
 };
 let notificationPrefsCache: NotificationPrefs | null = null;
-function NotificationSettings() {
-  const [prefs, setPrefs] = useState<NotificationPrefs>(
-      () => notificationPrefsCache || allNotificationsOn(),
-    ),
-    [message, setMessage] = useState(() =>
-      notificationPrefsCache ? "" : "Loading…",
-    );
-  const loaded = useRef(!!notificationPrefsCache);
-  useEffect(() => {
-    let live = true;
-    gql(`{myNotificationPreferences{success ${NOTIFICATION_PREF_FIELDS}}}`)
-      .then((d) => {
-        if (!live) return;
-        const next = readNotificationPrefs(d.myNotificationPreferences);
-        notificationPrefsCache = next;
-        loaded.current = true;
-        setPrefs(next);
-        setMessage((m) => (m === "Loading…" ? "" : m));
-      })
-      .catch((e) => {
-        if (live) setMessage(errorText(e));
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
-  // Toggle immediately; restore the previous value if the server refuses.
-  const change = async (key: keyof NotificationPrefs, enabled: boolean) => {
-    const previous = prefs[key];
-    setPrefs((p) => ({ ...p, [key]: enabled }));
-    setMessage("Saving…");
-    try {
-      const d = await gql(
-        `mutation($kind:String!,$enabled:Boolean!){notificationPreferenceSet(kind:$kind,enabled:$enabled){success ${NOTIFICATION_PREF_FIELDS}}}`,
-        { kind: key, enabled },
-      );
-      if (!d.notificationPreferenceSet.success)
-        throw Error("Preference could not be saved");
-      const next = readNotificationPrefs(d.notificationPreferenceSet);
-      notificationPrefsCache = next;
-      setPrefs(next);
-      setMessage("Notification preference saved.");
-    } catch (e) {
-      setPrefs((p) => ({ ...p, [key]: previous }));
-      setMessage(`Preference could not be saved: ${errorText(e)}`);
-    }
-  };
-  return (
-    <section
-      className="[--settings-accent:#171717] [--settings-accent-strong:#171717] [--settings-accent-soft:#e9e9e9] [--settings-on-accent:#fff] [--settings-ink:#171717] [--settings-muted:#626262] [--settings-line:#dcdcdc] [--settings-card:#fff] [--settings-subtle:#f0f0f0] [--settings-danger:#242424] [--settings-success:#242424] [:root[data-theme=dark]_&]:[--settings-accent:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-strong:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-soft:#2c2c2c] [:root[data-theme=dark]_&]:[--settings-on-accent:#171717] [:root[data-theme=dark]_&]:[--settings-ink:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-muted:#aaa] [:root[data-theme=dark]_&]:[--settings-line:#353535] [:root[data-theme=dark]_&]:[--settings-card:#1b1b1b] [:root[data-theme=dark]_&]:[--settings-subtle:#262626] [:root[data-theme=dark]_&]:[--settings-danger:#eee] [:root[data-theme=dark]_&]:[--settings-success:#d8d8d8] [font-optical-sizing:auto] ml-auto mr-auto w-[min(100%,var(--ds-settings-column-width))] max-w-(--ds-settings-column-width) min-w-0 p-[var(--ds-settings-column-padding)_var(--ds-settings-column-padding)_64px] text-(--settings-ink) font-(family-name:--hoja-font-ui) md:pt-4 shell-phone:pt-0 [@media_(max-width:_700px)]:pt-0 [@media_(min-width:_881px)]:pl-(--ds-settings-column-padding) [@media_(min-width:_881px)]:pr-(--ds-settings-column-padding) "
-      data-settings-page=""
-    >
-      <header
-        className="mt-0 mr-0 mb-8 ml-0 border-0 p-0 [@media_(max-width:_700px)]:mb-6.75 [@media_(max-width:_700px)]:pb-5"
-        data-settings-page-heading=""
-      >
-        <span className="hidden">Personal</span>
-        <h1 className="mt-0 mr-0 mb-2 ml-0 text-(--settings-ink) text-(length:--ds-settings-title-size) font-(--ds-settings-title-weight) leading-(--ds-settings-title-line) tracking-[-.035em] [@media_(max-width:_700px)]:text-(length:--ds-settings-title-size)">
-          Notifications
-        </h1>
-        <p className="mt-0 mr-0 mb-0 ml-0 max-w-full text-[13px] leading-[1.6] text-(--settings-muted) [@media_(max-width:_700px)]:text-[13px]">
-          Choose which task events appear in your Hoja inbox. Email and push
-          delivery are not available.
-        </p>
-      </header>
-      <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
-        data-settings-group=""
-      >
-        <span className="hidden">Delivery</span>
-        <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em]">
-          Inbox notifications
-        </h2>
-        <p
-          className="mt-1.5 mb-5 max-w-147.5 text-[13px] leading-[1.55] text-(--settings-muted)"
-          data-settings-section-intro=""
-        >
-          You follow tasks you create, are assigned, comment on or are mentioned
-          in; projects you lead, create or post to; initiatives you own or
-          create; and cycles you subscribe to. Choose which events reach your
-          inbox. Things addressed to you, like assignments and mentions, are
-          listed first in each group.
-        </p>
-        {NOTIFICATION_GROUPS.map(([group, kinds]) => (
-          <section
-            key={group}
-            className="mt-5 first-of-type:mt-0"
-            data-setting-notification-group={group}
-            aria-label={`${group} notifications`}
-          >
-            <h3 className="mt-0 mb-2 text-sm font-semibold text-(--settings-ink)">
-              {group}
-            </h3>
-            {kinds.map(([key, label, hint]) => (
-              <label
-                className="flex min-h-(--ds-settings-row-height) min-w-0 cursor-pointer flex-row items-center justify-between gap-5 border-t border-line p-(--ds-settings-row-padding) first-of-type:border-t-0 first-of-type:pt-0 last-of-type:pb-0.5 md:gap-5 shell-phone:gap-3 [@media_(max-width:_700px)]:gap-3"
-                data-setting-row=""
-                key={key}
-              >
-                <div className="min-w-0 flex-1">
-                  <b className="font-[620]">{label}</b>
-                  <p>{hint}</p>
-                </div>
-                <input
-                  className="relative mt-0 mr-0 mb-0 ml-0 h-5.5 w-9.5 flex-none cursor-pointer appearance-none rounded-[999px] border border-line bg-(--settings-subtle) after:absolute after:top-1 after:left-1 after:size-3.5 after:rounded-full after:bg-muted checked:border-foreground checked:bg-foreground checked:after:translate-x-4 checked:after:bg-panel checked:after:transition-transform checked:after:duration-150 checked:after:ease-out motion-reduce:after:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px] [@media_(max-width:_700px)]:w-10.5 [@media_(max-width:_700px)]:h-6"
-                  aria-label={label}
-                  data-setting-switch=""
-                  role="switch"
-                  type="checkbox"
-                  checked={prefs[key]}
-                  disabled={!loaded.current && message === "Loading…"}
-                  onChange={(e) => void change(key, e.target.checked)}
-                />
-              </label>
-            ))}
-          </section>
-        ))}
-        {message && (
-          <p role={message.includes("could not") ? "alert" : "status"}>
-            {message}
-          </p>
-        )}
-      </div>
-    </section>
-  );
-}
 type SettingsLabel = {
   id: string;
   name: string;
   color?: string;
   description?: string;
 };
-function LabelRow({
-  label,
-  admin,
-  pending,
-  onSave,
-  onDelete,
-}: {
-  label: SettingsLabel;
-  admin: boolean;
-  pending?: boolean;
-  onSave: (
-    id: string,
-    input: { name: string; color: string; description: string },
-  ) => Promise<void>;
-  onDelete: (id: string) => void;
-}) {
-  const [editing, setEditing] = useState(false),
-    [name, setName] = useState(label.name),
-    [color, setColor] = useState(label.color || "#6b7280"),
-    [description, setDescription] = useState(label.description || ""),
-    [message, setMessage] = useState("");
-  // Close the editor at once (the list shows the edit); reopen it with the error if the server refuses.
-  const save = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setMessage("");
-    setEditing(false);
-    try {
-      await onSave(label.id, { name: name.trim(), color, description });
-    } catch (err) {
-      setEditing(true);
-      setMessage(errorText(err));
-    }
-  };
-  if (!editing)
-    return (
-      <div
-        className="flex min-h-14.5 w-full items-center gap-2.5 border-b border-line bg-panel pl-4.5 pr-4.5 pt-3.5 pb-3.5 text-left hover:bg-panel hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 last:border-b-0"
-        data-issue-row=""
-        data-label-row=""
-        aria-busy={pending || undefined}
-      >
-        <span
-          className="w-2.5 h-2.5 flex-none rounded-[50%] ring-4 ring-subtle"
-          style={{ background: label.color || undefined }}
-        />
-        <span className="grid gap-1 flex-1" data-issue-copy="">
-          <b className="font-[550]">{label.name}</b>
-          <small className="text-[12px] leading-normal text-muted">
-            {pending ? "Saving…" : label.description || "Workspace task label"}
-          </small>
-        </span>
-        {admin && (
-          <>
-            <button
-              type="button"
-              className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-md border border-line bg-panel pl-2.75 pr-2.75 pt-2 pb-2 text-xs text-inherit hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-              disabled={pending}
-              onClick={() => {
-                setName(label.name);
-                setColor(label.color || "#6b7280");
-                setDescription(label.description || "");
-                setEditing(true);
-              }}
-            >
-              Edit
-            </button>
-            <button
-              type="button"
-              className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-md border border-line bg-panel pl-2.75 pr-2.75 pt-2 pb-2 text-xs text-inherit hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-              disabled={pending}
-              onClick={() => onDelete(label.id)}
-            >
-              Delete
-            </button>
-          </>
-        )}
-      </div>
-    );
-  return (
-    <form
-      className="flex min-h-14.5 w-full items-center gap-2.5 border-b border-line bg-panel pl-4.5 pr-4.5 pt-3.5 pb-3.5 text-left hover:bg-panel grid grid-cols-1 md:grid-cols-2 hover:bg-subtle focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 last:border-b-0"
-      data-issue-row=""
-      data-label-row=""
-      onSubmit={save}
-    >
-      <label className="min-w-0 text-xs last-of-type:col-span-full grid gap-1.5">
-        Name
-        <input
-          className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-          aria-label={`Name for label ${label.name}`}
-          required
-          maxLength={64}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-      </label>
-      <label className="min-w-0 text-xs last-of-type:col-span-full grid gap-1.5">
-        Color
-        <input
-          className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-          aria-label={`Color for label ${label.name}`}
-          type="color"
-          value={color}
-          onChange={(e) => setColor(e.target.value)}
-        />
-      </label>
-      <label className="min-w-0 text-xs last-of-type:col-span-full grid gap-1.5">
-        Description
-        <input
-          className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-          aria-label={`Description for label ${label.name}`}
-          maxLength={240}
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-        />
-      </label>
-      <button
-        className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-11 rounded-none border border-foreground bg-accent pl-3.5 pr-3.5 pt-2.25 pb-2.25 text-xs font-[650] text-white shadow-[none] hover:bg-foreground/90 hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.65]"
-        disabled={!name.trim()}
-      >
-        Save label
-      </button>
-      <button
-        type="button"
-        className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-md border border-line bg-panel pl-2.75 pr-2.75 pt-2 pb-2 text-xs text-inherit hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-        onClick={() => {
-          setEditing(false);
-          setMessage("");
-        }}
-      >
-        Cancel
-      </button>
-      {message && (
-        <small className="text-xs leading-normal text-muted" role="alert">
-          {message}
-        </small>
-      )}
-    </form>
-  );
-}
 let labelSettingsCache: { key: string; labels: SettingsLabel[] } | null = null;
-function IssueLabelsSettings({ viewer }: { viewer: Viewer }) {
-  const meta = useSyncMeta();
-  const cacheKey = meta?.workspace.id || "";
-  const [base, setBase] = useState<SettingsLabel[]>(() =>
-    labelSettingsCache && labelSettingsCache.key === cacheKey
-      ? labelSettingsCache.labels
-      : meta?.issueLabels.nodes || [],
-  );
-  const [labels, push] = useOptimisticList(base);
-  const [name, setName] = useState(""),
-    [color, setColor] = useState("#6b7280"),
-    [error, setError] = useState("");
-  const labelVersion = useEntityVersion(["label"]);
-  useEffect(() => {
-    let live = true;
-    gql("{issueLabelSettings{id name color description}}")
-      .then((d) => {
-        if (!live) return;
-        setBase(d.issueLabelSettings);
-        if (cacheKey)
-          labelSettingsCache = { key: cacheKey, labels: d.issueLabelSettings };
-      })
-      .catch((e) => {
-        if (live) setError(errorText(e));
-      });
-    return () => {
-      live = false;
-    };
-  }, [labelVersion, cacheKey]);
-  const commit = (next: (b: SettingsLabel[]) => SettingsLabel[]) =>
-    setBase((b) => {
-      const out = next(b);
-      if (cacheKey) labelSettingsCache = { key: cacheKey, labels: out };
-      return out;
-    });
-  const create = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    const input = { name: name.trim() || name, color };
-    const tempId = `pending-label-${Date.now()}`;
-    const layer = push({ id: tempId, add: { id: tempId, ...input } });
-    setName("");
-    try {
-      const d = await gql(
-        `mutation($input:IssueLabelCreateInput!){issueLabelCreate(input:$input){success issueLabel{id name color description}}}`,
-        { input },
-      );
-      if (!d.issueLabelCreate.success)
-        throw Error("Only workspace admins can manage labels.");
-      const created: SettingsLabel = d.issueLabelCreate.issueLabel || {
-        id: tempId,
-        ...input,
-      };
-      commit((b) => (b.some((l) => l.id === created.id) ? b : [...b, created]));
-      layer.drop();
-    } catch (err) {
-      layer.drop();
-      setName(input.name);
-      setError(errorText(err));
-    }
-  };
-  const save = async (
-    id: string,
-    input: { name: string; color: string; description: string },
-  ) => {
-    const layer = push({ id, patch: input });
-    try {
-      const d = await gql(
-        `mutation($id:String!,$input:IssueLabelUpdateInput!){issueLabelUpdate(id:$id,input:$input){success issueLabel{id name color description}}}`,
-        { id, input },
-      );
-      if (!d.issueLabelUpdate?.success)
-        throw Error("Label could not be updated.");
-      commit((b) =>
-        b.map((l) =>
-          l.id === id
-            ? { ...l, ...input, ...(d.issueLabelUpdate.issueLabel || {}) }
-            : l,
-        ),
-      );
-      layer.drop();
-    } catch (err) {
-      layer.drop();
-      throw err;
-    }
-  };
-  const remove = async (id: string) => {
-    if (
-      !(await confirmDialog(
-        "Delete this task label? Existing tasks may lose this label.",
-        { danger: true },
-      ))
-    )
-      return;
-    setError("");
-    const layer = push({ id, remove: true });
-    try {
-      const d = await gql(
-        `mutation($id:String!){issueLabelDelete(id:$id){success}}`,
-        { id },
-      );
-      if (!d.issueLabelDelete.success)
-        throw Error("Label deletion was denied.");
-      commit((b) => b.filter((l) => l.id !== id));
-      layer.drop();
-    } catch (err) {
-      layer.drop();
-      setError(errorText(err));
-    }
-  };
-  return (
-    <section
-      className="[--settings-accent:#171717] [--settings-accent-strong:#171717] [--settings-accent-soft:#e9e9e9] [--settings-on-accent:#fff] [--settings-ink:#171717] [--settings-muted:#626262] [--settings-line:#dcdcdc] [--settings-card:#fff] [--settings-subtle:#f0f0f0] [--settings-danger:#242424] [--settings-success:#242424] [:root[data-theme=dark]_&]:[--settings-accent:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-strong:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-soft:#2c2c2c] [:root[data-theme=dark]_&]:[--settings-on-accent:#171717] [:root[data-theme=dark]_&]:[--settings-ink:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-muted:#aaa] [:root[data-theme=dark]_&]:[--settings-line:#353535] [:root[data-theme=dark]_&]:[--settings-card:#1b1b1b] [:root[data-theme=dark]_&]:[--settings-subtle:#262626] [:root[data-theme=dark]_&]:[--settings-danger:#eee] [:root[data-theme=dark]_&]:[--settings-success:#d8d8d8] [font-optical-sizing:auto] ml-auto mr-auto w-[min(100%,var(--ds-settings-column-width))] max-w-(--ds-settings-column-width) min-w-0 p-[var(--ds-settings-column-padding)_var(--ds-settings-column-padding)_64px] text-(--settings-ink) font-(family-name:--hoja-font-ui) md:pt-4 shell-phone:pt-0 [@media_(max-width:_700px)]:pt-0 [@media_(min-width:_881px)]:pl-(--ds-settings-column-padding) [@media_(min-width:_881px)]:pr-(--ds-settings-column-padding) "
-      data-settings-page=""
-    >
-      <header
-        className="mt-0 mr-0 mb-8 ml-0 border-0 p-0 [@media_(max-width:_700px)]:mb-6.75 [@media_(max-width:_700px)]:pb-5"
-        data-settings-page-heading=""
-      >
-        <span className="hidden">Tasks</span>
-        <h1 className="mt-0 mr-0 mb-2 ml-0 text-(--settings-ink) text-(length:--ds-settings-title-size) font-(--ds-settings-title-weight) leading-(--ds-settings-title-line) tracking-[-.035em] [@media_(max-width:_700px)]:text-(length:--ds-settings-title-size)">
-          Labels
-        </h1>
-        <p className="mt-0 mr-0 mb-0 ml-0 max-w-full text-[13px] leading-[1.6] text-(--settings-muted) [@media_(max-width:_700px)]:text-[13px]">
-          Manage workspace task labels.
-        </p>
-      </header>
-      <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
-        data-settings-group=""
-        data-label-settings=""
-      >
-        <span className="hidden">Organization</span>
-        <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em]">
-          Task labels
-        </h2>
-        <p
-          className="mt-1.5 mb-5 max-w-147.5 text-[13px] leading-[1.55] text-(--settings-muted)"
-          data-settings-section-intro=""
-        >
-          A shared vocabulary for finding and organizing work.
-        </p>
-        {viewer.admin ? (
-          <form
-            className="grid grid-cols-2 items-end gap-3.5 md:grid-cols-3"
-            data-label-create=""
-            onSubmit={create}
-          >
-            <label className="min-w-0 text-[12px] grid gap-1.5">
-              Label name
-              <input
-                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-                aria-label="Task label name"
-                required
-                maxLength={64}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </label>
-            <label className="min-w-0 text-[12px] grid gap-1.5">
-              Color
-              <input
-                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-                aria-label="Task label color"
-                type="color"
-                value={color}
-                onChange={(e) => setColor(e.target.value)}
-              />
-            </label>
-            <button
-              className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-4 pr-4 pt-0 pb-0 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none col-span-full w-full md:col-span-1 md:w-auto focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5] [@media_(max-width:_700px)]:w-full"
-              disabled={!name.trim()}
-            >
-              Create label
-            </button>
-          </form>
-        ) : (
-          <p role="status">
-            Only workspace admins can create or delete labels.
-          </p>
-        )}
-        {error && <p role="alert">{error}</p>}
-        <div
-          className="border border-line rounded-lg shadow-[0_1px_2px_#1b1b1b08] overflow-hidden bg-panel **:data-status-history:max-w-[min(240px,calc(100vw-16px))] **:data-status-menu:max-w-[min(240px,calc(100vw-16px))]"
-          data-issue-card=""
-        >
-          {labels.map((l) => (
-            <LabelRow
-              key={l.id}
-              label={l}
-              admin={!!viewer.admin}
-              pending={l.id.startsWith("pending-label-")}
-              onSave={save}
-              onDelete={(id) => void remove(id)}
-            />
-          ))}
-          {!labels.length && <p>No task labels yet.</p>}
-        </div>
-      </div>
-    </section>
-  );
-}
-
 type ProjectStatusRow = {
   id: string;
   name: string;
@@ -16193,653 +13903,6 @@ const PROJECT_STATUS_QUERY =
 const PROJECT_TEMPLATE_QUERY =
   "{projectTemplates{id name description defaultState taskSet icon color lead{id name} teams{id name key}}}";
 
-/* HOJA-489. Real controls over a real store: the status list is the ordered set the
- * server validates project transitions against, and a template is expanded by
- * projectCreate, so nothing here is a toggle with nothing behind it. */
-function ProjectStatusesSettings() {
-  const [rows, setRows] = useState<ProjectStatusRow[]>([]);
-  const [error, setError] = useState(""),
-    [status, setStatus] = useState(""),
-    [busy, setBusy] = useState(false);
-  const [name, setName] = useState(""),
-    [category, setCategory] = useState("started"),
-    [color, setColor] = useState("#6b7280");
-  const load = useCallback(async () => {
-    try {
-      const d = await gql(PROJECT_STATUS_QUERY);
-      setRows(d.projectStatuses);
-    } catch (e) {
-      setError(errorText(e));
-    }
-  }, []);
-  useEffect(() => {
-    void load();
-  }, [load]);
-  const run = async (fn: () => Promise<void>, ok: string) => {
-    setBusy(true);
-    setError("");
-    setStatus("");
-    try {
-      await fn();
-      await load();
-      setStatus(ok);
-    } catch (e) {
-      setError(errorText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const create = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const label = name.trim();
-    await run(async () => {
-      const d = await gql(
-        "mutation($input:ProjectStatusInput!){projectStatusCreate(input:$input){success}}",
-        { input: { name: label, category, color } },
-      );
-      if (!d.projectStatusCreate?.success) throw Error("Status was rejected.");
-      setName("");
-    }, `Created ${label}.`);
-  };
-  const save = (row: ProjectStatusRow) => async (e: React.FormEvent) => {
-    e.preventDefault();
-    await run(async () => {
-      const d = await gql(
-        "mutation($id:String!,$input:ProjectStatusInput!){projectStatusUpdate(id:$id,input:$input){success}}",
-        {
-          id: row.id,
-          input: {
-            name: row.name.trim(),
-            category: row.category,
-            color: row.color || null,
-          },
-        },
-      );
-      if (!d.projectStatusUpdate?.success)
-        throw Error("Status could not be updated.");
-    }, `Saved ${row.name}.`);
-  };
-  const move = (index: number, delta: number) => async () => {
-    const target = index + delta;
-    if (target < 0 || target >= rows.length) return;
-    const next = [...rows];
-    const [row] = next.splice(index, 1);
-    next.splice(target, 0, row);
-    await run(async () => {
-      const d = await gql(
-        "mutation($ids:[String!]!){projectStatusReorder(ids:$ids)}",
-        { ids: next.map((r) => r.id) },
-      );
-      if (!d.projectStatusReorder) throw Error("Reorder was rejected.");
-    }, "Order saved.");
-  };
-  const remove = (row: ProjectStatusRow) => async () => {
-    if (
-      !(await confirmDialog(
-        `Delete the project status "${row.name}"? Existing projects keep their state text; new projects stop defaulting to it.`,
-        { danger: true },
-      ))
-    )
-      return;
-    await run(async () => {
-      const d = await gql(
-        "mutation($id:String!){projectStatusDelete(id:$id)}",
-        { id: row.id },
-      );
-      if (!d.projectStatusDelete) throw Error("Status could not be deleted.");
-    }, "Status deleted.");
-  };
-  return (
-    <section
-      className="[--settings-accent:#171717] [--settings-accent-strong:#171717] [--settings-accent-soft:#e9e9e9] [--settings-on-accent:#fff] [--settings-ink:#171717] [--settings-muted:#626262] [--settings-line:#dcdcdc] [--settings-card:#fff] [--settings-subtle:#f0f0f0] [--settings-danger:#242424] [--settings-success:#242424] [:root[data-theme=dark]_&]:[--settings-accent:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-strong:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-soft:#2c2c2c] [:root[data-theme=dark]_&]:[--settings-on-accent:#171717] [:root[data-theme=dark]_&]:[--settings-ink:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-muted:#aaa] [:root[data-theme=dark]_&]:[--settings-line:#353535] [:root[data-theme=dark]_&]:[--settings-card:#1b1b1b] [:root[data-theme=dark]_&]:[--settings-subtle:#262626] [:root[data-theme=dark]_&]:[--settings-danger:#eee] [:root[data-theme=dark]_&]:[--settings-success:#d8d8d8] [font-optical-sizing:auto] ml-auto mr-auto w-[min(100%,var(--ds-settings-column-width))] max-w-(--ds-settings-column-width) min-w-0 p-[var(--ds-settings-column-padding)_var(--ds-settings-column-padding)_64px] text-(--settings-ink) font-(family-name:--hoja-font-ui) md:pt-4 shell-phone:pt-0 [@media_(max-width:_700px)]:pt-0 [@media_(min-width:_881px)]:pl-(--ds-settings-column-padding) [@media_(min-width:_881px)]:pr-(--ds-settings-column-padding) "
-      data-settings-page=""
-      data-settings-pane="project-statuses"
-    >
-      <header
-        className="mt-0 mr-0 mb-8 ml-0 border-0 p-0 [@media_(max-width:_700px)]:mb-6.75 [@media_(max-width:_700px)]:pb-5"
-        data-settings-page-heading=""
-      >
-        <span className="hidden">Administration</span>
-        <h1 className="mt-0 mr-0 mb-2 ml-0 text-(--settings-ink) text-(length:--ds-settings-title-size) font-(--ds-settings-title-weight) leading-(--ds-settings-title-line) tracking-[-.035em] [@media_(max-width:_700px)]:text-(length:--ds-settings-title-size)">
-          Project statuses
-        </h1>
-        <p className="mt-0 mr-0 mb-0 ml-0 max-w-full text-[13px] leading-[1.6] text-(--settings-muted) [@media_(max-width:_700px)]:text-[13px]">
-          The ordered set a project's state comes from. The first status is the
-          default for a new project, and the server refuses a transition to any
-          status that is not in this list.
-        </p>
-      </header>
-      <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
-        data-settings-group=""
-      >
-        <span className="hidden">Projects</span>
-        <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em]">
-          Statuses
-        </h2>
-        <p
-          className="mt-1.5 mb-5 max-w-147.5 text-[13px] leading-[1.55] text-(--settings-muted)"
-          data-settings-section-intro=""
-        >
-          Reorder with the arrows; the order is enforced on project transitions,
-          not just displayed.
-        </p>
-        <form
-          className="grid grid-cols-2 items-end gap-3.5 md:grid-cols-3"
-          data-label-create=""
-          onSubmit={create}
-        >
-          <label className="grid min-w-0 gap-1.5 text-[12px]">
-            Name
-            <input
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-              aria-label="Project status name"
-              required
-              maxLength={40}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </label>
-          <label className="grid min-w-0 gap-1.5 text-[12px]">
-            Category
-            <select
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              aria-label="Project status category"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-            >
-              <option value="backlog">Backlog</option>
-              <option value="started">In progress</option>
-              <option value="completed">Completed</option>
-              <option value="canceled">Canceled</option>
-            </select>
-          </label>
-          <label className="grid min-w-0 gap-1.5 text-[12px]">
-            Color
-            <input
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              aria-label="Project status color"
-              type="color"
-              value={color}
-              onChange={(e) => setColor(e.target.value)}
-            />
-          </label>
-          <button
-            className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-4 pr-4 pt-0 pb-0 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none col-span-full w-full md:col-span-1 md:w-auto focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5] [@media_(max-width:_700px)]:w-full"
-            disabled={busy || !name.trim()}
-          >
-            Add status
-          </button>
-        </form>
-        {error && <p role="alert">{error}</p>}
-        {status && <p role="status">{status}</p>}
-        <div
-          className="mt-4 border border-line rounded-lg shadow-[0_1px_2px_#1b1b1b08] overflow-hidden bg-panel **:data-status-history:max-w-[min(240px,calc(100vw-16px))] **:data-status-menu:max-w-[min(240px,calc(100vw-16px))]"
-          data-issue-card=""
-        >
-          {rows.map((row, index) => (
-            <form
-              className="grid grid-cols-[28px_10px_minmax(90px,1fr)_minmax(110px,auto)_auto_auto_auto_auto_auto] max-sm:grid-cols-[24px_10px_minmax(0,1fr)_44px_44px_44px] items-center gap-2 border-b border-line pl-3 pr-3 pt-2.5 pb-2.5 last:border-b-0 [&>button]:whitespace-nowrap"
-              data-project-status-row=""
-              key={row.id}
-              onSubmit={save(row)}
-            >
-              <span
-                className="text-center font-mono text-[11px] tabular-nums text-(--settings-muted)"
-                data-project-status-order=""
-                aria-label={`Position ${index + 1}`}
-              >
-                {index + 1}
-              </span>
-              <span
-                className="w-2.5 h-2.5 rounded-[999px] shadow-[0_0_0_3px_var(--settings-subtle)]"
-                data-projects-status-dot=""
-                style={{ background: row.color || undefined }}
-                aria-hidden="true"
-              />
-              <input
-                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] max-sm:col-[3/6] px-2.5"
-                aria-label={`Status ${index + 1} name`}
-                value={row.name}
-                onChange={(e) =>
-                  setRows((rs) =>
-                    rs.map((r) =>
-                      r.id === row.id ? { ...r, name: e.target.value } : r,
-                    ),
-                  )
-                }
-              />
-              <select
-                className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] max-sm:col-[1/5]"
-                aria-label={`Status ${row.name} category`}
-                value={row.category}
-                onChange={(e) =>
-                  setRows((rs) =>
-                    rs.map((r) =>
-                      r.id === row.id ? { ...r, category: e.target.value } : r,
-                    ),
-                  )
-                }
-              >
-                <option value="backlog">Backlog</option>
-                <option value="started">In progress</option>
-                <option value="completed">Completed</option>
-                <option value="canceled">Canceled</option>
-              </select>
-              <input
-                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 w-7 border-0 p-0 [background:none] max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] pointer-coarse:w-11 max-sm:col-start-6 max-sm:row-start-1"
-                aria-label={`Status ${row.name} color`}
-                type="color"
-                value={row.color || "#6b7280"}
-                onChange={(e) =>
-                  setRows((rs) =>
-                    rs.map((r) =>
-                      r.id === row.id ? { ...r, color: e.target.value } : r,
-                    ),
-                  )
-                }
-              />
-              <button
-                type="button"
-                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-lg border border-line bg-(--settings-card) pl-4 pr-4 pt-0 pb-0 text-[11px] text-(--settings-ink) hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 hover:bg-(--settings-subtle) disabled:opacity-[.5]"
-                aria-label={`Move ${row.name} up`}
-                disabled={busy || index === 0}
-                onClick={move(index, -1)}
-              >
-                ↑
-              </button>
-              <button
-                type="button"
-                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-lg border border-line bg-(--settings-card) pl-4 pr-4 pt-0 pb-0 text-[11px] text-(--settings-ink) hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 hover:bg-(--settings-subtle) disabled:opacity-[.5]"
-                aria-label={`Move ${row.name} down`}
-                disabled={busy || index === rows.length - 1}
-                onClick={move(index, 1)}
-              >
-                ↓
-              </button>
-              <button
-                type="submit"
-                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-4 pr-4 pt-0 pb-0 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5] max-sm:col-[1/5]"
-                disabled={busy}
-              >
-                Save
-              </button>
-              <button
-                type="button"
-                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-lg border border-line bg-(--settings-card) pl-4 pr-4 pt-0 pb-0 text-[11px] text-(--settings-ink) hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 hover:bg-(--settings-subtle) disabled:opacity-[.5] max-sm:col-[5/-1]"
-                aria-label={`Delete ${row.name}`}
-                disabled={busy || rows.length === 1}
-                onClick={remove(row)}
-              >
-                Delete
-              </button>
-            </form>
-          ))}
-          {!rows.length && (
-            <p>
-              No statuses yet; the server seeds the six defaults on first read.
-            </p>
-          )}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function ProjectTemplatesSettings({ teams }: { teams: Team[] }) {
-  const blank = {
-    name: "",
-    description: "",
-    defaultState: "",
-    icon: "",
-    color: "#6b7280",
-    leadId: "",
-    teamIds: [] as string[],
-    taskSet: "",
-  };
-  const [draft, setDraft] = useState(blank),
-    [editing, setEditing] = useState<string | null>(null);
-  const [rows, setRows] = useState<ProjectTemplateRow[]>([]),
-    [statuses, setStatuses] = useState<ProjectStatusRow[]>([]);
-  const [error, setError] = useState(""),
-    [status, setStatus] = useState(""),
-    [busy, setBusy] = useState(false);
-  const people = useMemo(
-    () => [
-      ...new Map(
-        teams.flatMap((t) => t.members?.nodes || []).map((m) => [m.id, m]),
-      ).values(),
-    ],
-    [teams],
-  );
-  const load = useCallback(async () => {
-    try {
-      const d = await gql(PROJECT_TEMPLATE_QUERY);
-      setRows(d.projectTemplates);
-    } catch (e) {
-      setError(errorText(e));
-    }
-    try {
-      const s = await gql(PROJECT_STATUS_QUERY);
-      setStatuses(s.projectStatuses);
-    } catch {
-      /* the select degrades to empty; save still validates server-side */
-    }
-  }, []);
-  useEffect(() => {
-    void load();
-  }, [load]);
-  const run = async (fn: () => Promise<void>, ok: string) => {
-    setBusy(true);
-    setError("");
-    setStatus("");
-    try {
-      await fn();
-      await load();
-      setStatus(ok);
-    } catch (e) {
-      setError(errorText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const input = {
-      name: draft.name.trim(),
-      description: draft.description.trim() || null,
-      state: draft.defaultState || null,
-      icon: draft.icon.trim() || null,
-      color: draft.color || null,
-      leadId: draft.leadId || null,
-      teamIds: draft.teamIds,
-      taskSet: draft.taskSet
-        .split("\n")
-        .map((t) => t.trim())
-        .filter(Boolean),
-    };
-    await run(
-      async () => {
-        const d = editing
-          ? await gql(
-              "mutation($id:String!,$input:ProjectTemplateInput!){projectTemplateUpdate(id:$id,input:$input){success}}",
-              { id: editing, input },
-            )
-          : await gql(
-              "mutation($input:ProjectTemplateInput!){projectTemplateCreate(input:$input){success}}",
-              { input },
-            );
-        const ok = editing
-          ? d.projectTemplateUpdate?.success
-          : d.projectTemplateCreate?.success;
-        if (!ok) throw Error("Template was rejected.");
-        setDraft(blank);
-        setEditing(null);
-      },
-      editing ? "Template saved." : "Template created.",
-    );
-  };
-  const archive = (row: ProjectTemplateRow) => async () => {
-    if (
-      !(await confirmDialog(
-        `Archive the template "${row.name}"? Projects already created from it are unchanged.`,
-        { danger: true },
-      ))
-    )
-      return;
-    await run(async () => {
-      const d = await gql(
-        "mutation($id:String!){projectTemplateArchive(id:$id)}",
-        { id: row.id },
-      );
-      if (!d.projectTemplateArchive)
-        throw Error("Template could not be archived.");
-    }, "Template archived.");
-  };
-  const edit = (row: ProjectTemplateRow) => {
-    setEditing(row.id);
-    setDraft({
-      name: row.name,
-      description: row.description || "",
-      defaultState: row.defaultState || "",
-      icon: row.icon || "",
-      color: row.color || "#6b7280",
-      leadId: row.lead?.id || "",
-      teamIds: row.teams.map((t) => t.id),
-      taskSet: row.taskSet.join("\n"),
-    });
-  };
-  const toggleTeam = (id: string) => {
-    setDraft((d) => ({
-      ...d,
-      teamIds: d.teamIds.includes(id)
-        ? d.teamIds.filter((t) => t !== id)
-        : [...d.teamIds, id],
-    }));
-  };
-  return (
-    <section
-      className="[--settings-accent:#171717] [--settings-accent-strong:#171717] [--settings-accent-soft:#e9e9e9] [--settings-on-accent:#fff] [--settings-ink:#171717] [--settings-muted:#626262] [--settings-line:#dcdcdc] [--settings-card:#fff] [--settings-subtle:#f0f0f0] [--settings-danger:#242424] [--settings-success:#242424] [:root[data-theme=dark]_&]:[--settings-accent:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-strong:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-soft:#2c2c2c] [:root[data-theme=dark]_&]:[--settings-on-accent:#171717] [:root[data-theme=dark]_&]:[--settings-ink:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-muted:#aaa] [:root[data-theme=dark]_&]:[--settings-line:#353535] [:root[data-theme=dark]_&]:[--settings-card:#1b1b1b] [:root[data-theme=dark]_&]:[--settings-subtle:#262626] [:root[data-theme=dark]_&]:[--settings-danger:#eee] [:root[data-theme=dark]_&]:[--settings-success:#d8d8d8] [font-optical-sizing:auto] ml-auto mr-auto w-[min(100%,var(--ds-settings-column-width))] max-w-(--ds-settings-column-width) min-w-0 p-[var(--ds-settings-column-padding)_var(--ds-settings-column-padding)_64px] text-(--settings-ink) font-(family-name:--hoja-font-ui) md:pt-4 shell-phone:pt-0 [@media_(max-width:_700px)]:pt-0 [@media_(min-width:_881px)]:pl-(--ds-settings-column-padding) [@media_(min-width:_881px)]:pr-(--ds-settings-column-padding) "
-      data-settings-page=""
-      data-settings-pane="project-templates"
-    >
-      <header
-        className="mt-0 mr-0 mb-8 ml-0 border-0 p-0 [@media_(max-width:_700px)]:mb-6.75 [@media_(max-width:_700px)]:pb-5"
-        data-settings-page-heading=""
-      >
-        <span className="hidden">Administration</span>
-        <h1 className="mt-0 mr-0 mb-2 ml-0 text-(--settings-ink) text-(length:--ds-settings-title-size) font-(--ds-settings-title-weight) leading-(--ds-settings-title-line) tracking-[-.035em] [@media_(max-width:_700px)]:text-(length:--ds-settings-title-size)">
-          Project templates
-        </h1>
-        <p className="mt-0 mr-0 mb-0 ml-0 max-w-full text-[13px] leading-[1.6] text-(--settings-muted) [@media_(max-width:_700px)]:text-[13px]">
-          A template supplies name, description, lead, teams, default status and
-          an optional task set. Creating a project from one expands the same
-          fields the API would, and its tasks are created as real tasks.
-        </p>
-      </header>
-      <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
-        data-settings-group=""
-      >
-        <span className="hidden">Projects</span>
-        <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em]">
-          {editing ? "Edit template" : "New template"}
-        </h2>
-        {editing && (
-          <button
-            className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 text-accent bg-transparent border-0 text-[11px] focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
-            type="button"
-            data-text-action=""
-            onClick={() => {
-              setEditing(null);
-              setDraft(blank);
-            }}
-          >
-            Cancel editing
-          </button>
-        )}
-        <form
-          className="grid grid-cols-1 items-end gap-3.5 sm:grid-cols-2 md:grid-cols-3"
-          data-label-create=""
-          data-project-template-form=""
-          onSubmit={submit}
-        >
-          <label className="min-w-0 text-[12px] grid gap-1.5">
-            Name
-            <input
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-              aria-label="Template name"
-              required
-              maxLength={80}
-              value={draft.name}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, name: e.target.value }))
-              }
-            />
-          </label>
-          <label className="min-w-0 text-[12px] grid gap-1.5">
-            Description
-            <textarea
-              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 w-full max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-              aria-label="Template description"
-              rows={2}
-              value={draft.description}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, description: e.target.value }))
-              }
-            />
-          </label>
-          <label className="min-w-0 text-[12px] grid gap-1.5">
-            Default status
-            <select
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              aria-label="Template default status"
-              value={draft.defaultState}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, defaultState: e.target.value }))
-              }
-            >
-              <option value="">Server default (first status)</option>
-              {statuses.map((s) => (
-                <option value={s.name} key={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="min-w-0 text-[12px] grid gap-1.5">
-            Lead
-            <select
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              aria-label="Template lead"
-              value={draft.leadId}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, leadId: e.target.value }))
-              }
-            >
-              <option value="">No lead</option>
-              {people.map((p) => (
-                <option value={p.id} key={p.id}>
-                  {p.name || p.email}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="min-w-0 text-[12px] grid gap-1.5">
-            Color
-            <input
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              aria-label="Template color"
-              type="color"
-              value={draft.color}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, color: e.target.value }))
-              }
-            />
-          </label>
-          <fieldset
-            className="col-span-full mt-0 mr-0 mb-0 ml-0 flex flex-wrap gap-x-4 gap-y-2 rounded-lg border border-line pl-3 pr-3 pt-2.5 pb-2.5"
-            data-project-template-teams=""
-          >
-            <legend className="pl-1 pr-1 text-[11px] text-(--settings-muted)">
-              Teams
-            </legend>
-            {teams.map((t) => (
-              <label
-                className="min-w-0 text-[12px] flex items-center gap-2 pointer-coarse:min-h-11"
-                key={t.id}
-              >
-                <input
-                  className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm size-3.5 accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px]"
-                  type="checkbox"
-                  checked={draft.teamIds.includes(t.id)}
-                  onChange={() => toggleTeam(t.id)}
-                />
-                {t.name}
-              </label>
-            ))}
-            {!teams.length && <p>No teams yet.</p>}
-          </fieldset>
-          <label className="min-w-0 text-[12px] grid gap-1.5">
-            Task set, one title per line
-            <textarea
-              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 w-full max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-              aria-label="Template task set"
-              rows={3}
-              placeholder={"Write the brief\nShip the build"}
-              value={draft.taskSet}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, taskSet: e.target.value }))
-              }
-            />
-          </label>
-          <button
-            className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-4 pr-4 pt-0 pb-0 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none col-span-full w-full md:col-span-1 md:w-auto focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5] [@media_(max-width:_700px)]:w-full"
-            disabled={busy || !draft.name.trim()}
-          >
-            {editing ? "Save template" : "Create template"}
-          </button>
-        </form>
-        {error && <p role="alert">{error}</p>}
-        {status && <p role="status">{status}</p>}
-        <div
-          className="border border-line rounded-lg shadow-[0_1px_2px_#1b1b1b08] overflow-hidden bg-panel **:data-status-history:max-w-[min(240px,calc(100vw-16px))] **:data-status-menu:max-w-[min(240px,calc(100vw-16px))]"
-          data-issue-card=""
-        >
-          {rows.map((row) => (
-            <div
-              className="flex min-h-14.5 w-full items-center gap-3 border-b border-line bg-(--settings-card) pl-3.5 pr-3.5 pt-3 pb-3 text-left hover:bg-panel flex-wrap hover:bg-(--settings-card)"
-              data-label-row=""
-              data-project-template-row=""
-              key={row.id}
-            >
-              <span
-                className="w-3 h-3 rounded-[50%] border-2 border-dotted border-orange-400"
-                data-projects-status-dot=""
-                style={{ background: row.color || undefined }}
-                aria-hidden="true"
-              />
-              <span
-                className="flex min-w-0 flex-auto flex-col gap-0.5"
-                data-project-template-copy=""
-              >
-                <b className="font-semibold">{row.name}</b>
-                <small className="text-[11px] leading-normal text-(--settings-muted)">
-                  {row.description || "No description"} · {row.teams.length}{" "}
-                  team{row.teams.length === 1 ? "" : "s"} · {row.taskSet.length}{" "}
-                  task{row.taskSet.length === 1 ? "" : "s"} · default{" "}
-                  {row.defaultState || "first status"}
-                </small>
-              </span>
-              <button
-                type="button"
-                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-lg border border-line bg-(--settings-card) pl-2.75 pr-2.75 pt-2 pb-2 text-[11px] text-(--settings-ink) hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 hover:bg-(--settings-subtle) disabled:opacity-[.5]"
-                onClick={() => edit(row)}
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-lg border border-line bg-(--settings-card) pl-2.75 pr-2.75 pt-2 pb-2 text-[11px] text-(--settings-ink) hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 hover:bg-(--settings-subtle) disabled:opacity-[.5]"
-                aria-label={`Archive ${row.name}`}
-                disabled={busy}
-                onClick={archive(row)}
-              >
-                Archive
-              </button>
-            </div>
-          ))}
-          {!rows.length && (
-            <p className="m-0 pt-4 pr-4 pb-4 pl-4 text-[13px] text-(--settings-muted)">
-              No project templates yet.
-            </p>
-          )}
-        </div>
-      </div>
-    </section>
-  );
-}
-
 /* HOJA-491 SLAs. The pane edits policies the server actually enforces: every
  * clock below is started, paused and stopped by the events in sla.py, and the
  * task card reads the same row this pane configures. */
@@ -16858,562 +13921,6 @@ type SlaPolicyRow = {
 };
 const SLA_POLICY_QUERY =
   "{slaPolicies{id name team{id key} appliesPriorities firstResponseMinutes resolutionMinutes pauseStates{id name} enabled cycleBound stopsOn businessDaysOnly}}";
-
-function SlaSettings({ teams }: { teams: Team[] }) {
-  const blank = {
-    name: "",
-    teamId: "",
-    firstResponse: "",
-    resolution: "",
-    priorities: [] as number[],
-    pauseStateIds: [] as string[],
-    // HOJA-704. The defaults are today's behaviour, except ``applyToOpen``:
-    // a task that was already open when its policy arrived had no clock, and
-    // starting one now is the gap this pane closes. Untick it for a policy that
-    // should only govern work created after it.
-    cycleBound: false,
-    stopsOn: "completed",
-    businessDaysOnly: false,
-    applyToOpen: true,
-  };
-  const [draft, setDraft] = useState(blank),
-    [editing, setEditing] = useState<string | null>(null),
-    [rows, setRows] = useState<SlaPolicyRow[]>([]);
-  const [error, setError] = useState(""),
-    [status, setStatus] = useState(""),
-    [busy, setBusy] = useState(false);
-  const load = useCallback(async () => {
-    try {
-      const d = await gql(SLA_POLICY_QUERY);
-      setRows(d.slaPolicies);
-    } catch (e) {
-      setError(errorText(e));
-    }
-  }, []);
-  useEffect(() => {
-    void load();
-  }, [load]);
-  const run = async (fn: () => Promise<void>, done: string) => {
-    setBusy(true);
-    setError("");
-    setStatus("");
-    try {
-      await fn();
-      await load();
-      setStatus(done);
-    } catch (e) {
-      setError(errorText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const input = {
-      name: draft.name.trim(),
-      teamId: draft.teamId || null,
-      firstResponseMinutes: draft.firstResponse
-        ? Number(draft.firstResponse)
-        : null,
-      resolutionMinutes: draft.resolution ? Number(draft.resolution) : null,
-      appliesPriorities: draft.priorities,
-      pauseStateIds: draft.pauseStateIds,
-      cycleBound: draft.cycleBound,
-      stopsOn: draft.stopsOn,
-      businessDaysOnly: draft.businessDaysOnly,
-      applyToOpen: draft.applyToOpen,
-    };
-    await run(
-      async () => {
-        const d = editing
-          ? await gql(
-              "mutation($id:String!,$input:SlaPolicyInput!){slaPolicyUpdate(id:$id,input:$input){success}}",
-              { id: editing, input },
-            )
-          : await gql(
-              "mutation($input:SlaPolicyInput!){slaPolicyCreate(input:$input){success}}",
-              { input },
-            );
-        const ok = editing
-          ? d.slaPolicyUpdate?.success
-          : d.slaPolicyCreate?.success;
-        if (!ok) throw Error("The policy was rejected.");
-        setDraft(blank);
-        setEditing(null);
-      },
-      editing ? "Policy saved." : "Policy created.",
-    );
-  };
-  const edit = (row: SlaPolicyRow) => {
-    setEditing(row.id);
-    setDraft({
-      name: row.name,
-      teamId: row.team?.id || "",
-      firstResponse: row.firstResponseMinutes
-        ? String(row.firstResponseMinutes)
-        : "",
-      resolution: row.resolutionMinutes ? String(row.resolutionMinutes) : "",
-      priorities: row.appliesPriorities,
-      pauseStateIds: row.pauseStates.map((s) => s.id),
-      cycleBound: row.cycleBound,
-      stopsOn: row.stopsOn,
-      businessDaysOnly: row.businessDaysOnly,
-      // A save starts clocks only when asked; editing a policy is not consent to
-      // restart the clock of every task it covers.
-      applyToOpen: false,
-    });
-  };
-  const archive = (row: SlaPolicyRow) => async () => {
-    if (
-      !(await confirmDialog(
-        `Archive the SLA policy "${row.name}"? Tasks already running keep their clock; new tasks stop starting one.`,
-        { danger: true },
-      ))
-    )
-      return;
-    await run(async () => {
-      const d = await gql("mutation($id:String!){slaPolicyArchive(id:$id)}", {
-        id: row.id,
-      });
-      if (!d.slaPolicyArchive) throw Error("The policy could not be archived.");
-    }, "Policy archived.");
-  };
-  /* HOJA-704's cycle preset: the five policies a workspace running weekly cycles
-   * actually wants, created in one press. Every policy is workspace-wide and
-   * pauses in every Backlog state, so a task waiting on somebody is not late.
-   * "Cycle-bound, else N days" keeps a target for tasks that sit outside a
-   * cycle, which is why the fallback minutes are always sent. */
-  const cyclePreset = () => {
-    const backlog = [
-      ...new Set(
-        teams.flatMap((t) =>
-          (t.states?.nodes || [])
-            .filter((st) => st.type === "backlog")
-            .map((st) => st.id),
-        ),
-      ),
-    ];
-    const day = 24 * 60;
-    const presets = [
-      {
-        name: "Urgent",
-        appliesPriorities: [1],
-        firstResponseMinutes: 120,
-        resolutionMinutes: day,
-        cycleBound: false,
-      },
-      {
-        name: "High",
-        appliesPriorities: [2],
-        firstResponseMinutes: day,
-        resolutionMinutes: 7 * day,
-        cycleBound: true,
-      },
-      {
-        name: "Medium",
-        appliesPriorities: [3],
-        firstResponseMinutes: null,
-        resolutionMinutes: 14 * day,
-        cycleBound: true,
-      },
-      {
-        name: "Low",
-        appliesPriorities: [4],
-        firstResponseMinutes: null,
-        resolutionMinutes: 28 * day,
-        cycleBound: true,
-      },
-      {
-        // The triage policy: an untriaged task must get a priority within two
-        // days, and the clock stops the moment one arrives.
-        name: "No priority",
-        appliesPriorities: [0],
-        firstResponseMinutes: null,
-        resolutionMinutes: 2 * day,
-        cycleBound: false,
-        stopsOn: "prioritized",
-      },
-    ];
-    return presets.map((preset) => ({
-      teamId: null,
-      pauseStateIds: backlog,
-      businessDaysOnly: false,
-      applyToOpen: true,
-      stopsOn: "completed",
-      ...preset,
-    }));
-  };
-  const [presetBusy, setPresetBusy] = useState(false);
-  const createPreset = async () => {
-    setPresetBusy(true);
-    setError("");
-    setStatus("");
-    let made = 0;
-    const failures: string[] = [];
-    try {
-      for (const input of cyclePreset()) {
-        try {
-          const d = await gql(
-            "mutation($input:SlaPolicyInput!){slaPolicyCreate(input:$input){success}}",
-            { input },
-          );
-          if (d.slaPolicyCreate?.success) made += 1;
-          else failures.push(input.name);
-        } catch (e) {
-          failures.push(`${input.name} (${errorText(e)})`);
-        }
-      }
-      await load();
-      setStatus(
-        failures.length
-          ? `Created ${made} of ${cyclePreset().length} policies. ${failures.join("; ")}`
-          : `Created ${made} policies from the cycle preset.`,
-      );
-    } finally {
-      setPresetBusy(false);
-    }
-  };
-  const toggle = (list: number[], value: number) =>
-    list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
-  const pauseStates = teams
-    .filter((t) => !draft.teamId || t.id === draft.teamId)
-    .flatMap((t) => t.states?.nodes || []);
-  return (
-    <section
-      className="[--settings-accent:#171717] [--settings-accent-strong:#171717] [--settings-accent-soft:#e9e9e9] [--settings-on-accent:#fff] [--settings-ink:#171717] [--settings-muted:#626262] [--settings-line:#dcdcdc] [--settings-card:#fff] [--settings-subtle:#f0f0f0] [--settings-danger:#242424] [--settings-success:#242424] [:root[data-theme=dark]_&]:[--settings-accent:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-strong:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-soft:#2c2c2c] [:root[data-theme=dark]_&]:[--settings-on-accent:#171717] [:root[data-theme=dark]_&]:[--settings-ink:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-muted:#aaa] [:root[data-theme=dark]_&]:[--settings-line:#353535] [:root[data-theme=dark]_&]:[--settings-card:#1b1b1b] [:root[data-theme=dark]_&]:[--settings-subtle:#262626] [:root[data-theme=dark]_&]:[--settings-danger:#eee] [:root[data-theme=dark]_&]:[--settings-success:#d8d8d8] [font-optical-sizing:auto] ml-auto mr-auto w-[min(100%,var(--ds-settings-column-width))] max-w-(--ds-settings-column-width) min-w-0 p-[var(--ds-settings-column-padding)_var(--ds-settings-column-padding)_64px] text-(--settings-ink) font-(family-name:--hoja-font-ui) md:pt-4 shell-phone:pt-0 [@media_(max-width:_700px)]:pt-0 [@media_(min-width:_881px)]:pl-(--ds-settings-column-padding) [@media_(min-width:_881px)]:pr-(--ds-settings-column-padding) "
-      data-settings-page=""
-      data-settings-pane="slas"
-    >
-      <header
-        className="mt-0 mr-0 mb-8 ml-0 border-0 p-0 [@media_(max-width:_700px)]:mb-6.75 [@media_(max-width:_700px)]:pb-5"
-        data-settings-page-heading=""
-      >
-        <span className="hidden">Issues</span>
-        <h1 className="mt-0 mr-0 mb-2 ml-0 text-(--settings-ink) text-(length:--ds-settings-title-size) font-(--ds-settings-title-weight) leading-(--ds-settings-title-line) tracking-[-.035em] [@media_(max-width:_700px)]:text-(length:--ds-settings-title-size)">
-          SLAs
-        </h1>
-        <p className="mt-0 mr-0 mb-0 ml-0 max-w-full text-[13px] leading-[1.6] text-(--settings-muted) [@media_(max-width:_700px)]:text-[13px]">
-          A policy gives a task a clock: a first-response and a resolution
-          deadline that start when the task is created, pause while it waits in
-          the states you name, and stop when it is completed. Breaches are
-          recorded once, not on every page view.
-        </p>
-      </header>
-      <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
-        data-settings-group=""
-      >
-        <span className="hidden">Policies</span>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em]">
-            {editing ? "Edit policy" : "New policy"}
-          </h2>
-          <button
-            className="min-h-8 rounded-lg border border-line bg-(--settings-card) pl-2.75 pr-2.75 pt-1.5 pb-1.5 text-[11px] text-(--settings-ink) hover:bg-(--settings-subtle) hover:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11"
-            type="button"
-            data-sla-preset=""
-            disabled={busy || presetBusy}
-            onClick={() => void createPreset()}
-          >
-            {presetBusy ? "Creating…" : "Cycle preset"}
-          </button>
-        </div>
-        {editing && (
-          <button
-            className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 text-accent bg-transparent border-0 text-[11px] focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
-            type="button"
-            data-text-action=""
-            onClick={() => {
-              setEditing(null);
-              setDraft(blank);
-            }}
-          >
-            Cancel editing
-          </button>
-        )}
-        <form
-          className="grid grid-cols-1 items-end gap-3.5 sm:grid-cols-2 md:grid-cols-3"
-          data-label-create=""
-          onSubmit={submit}
-        >
-          <label className="grid min-w-0 gap-1.5 text-[12px]">
-            Name
-            <input
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-              aria-label="SLA policy name"
-              required
-              maxLength={80}
-              value={draft.name}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, name: e.target.value }))
-              }
-            />
-          </label>
-          <label className="grid min-w-0 gap-1.5 text-[12px]">
-            Scope
-            <select
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              aria-label="SLA policy scope"
-              value={draft.teamId}
-              onChange={(e) =>
-                setDraft((d) => ({
-                  ...d,
-                  teamId: e.target.value,
-                  pauseStateIds: [],
-                }))
-              }
-            >
-              <option value="">Whole workspace</option>
-              {teams.map((t) => (
-                <option value={t.id} key={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          {/* HOJA-681: the two targets are one decision and sit on one row, so
-              "how fast do you answer" and "how fast do you finish" are read
-              together instead of stacking into two rows of the grid. */}
-          <div
-            className="col-span-full grid min-w-0 grid-cols-1 items-end gap-3.5 sm:grid-cols-2"
-            data-sla-targets=""
-          >
-            <label className="grid min-w-0 gap-1.5 text-[12px]">
-              First response, minutes
-              <input
-                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-                aria-label="First response minutes"
-                type="number"
-                min="1"
-                value={draft.firstResponse}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, firstResponse: e.target.value }))
-                }
-              />
-            </label>
-            <label className="grid min-w-0 gap-1.5 text-[12px]">
-              {draft.cycleBound
-                ? "Resolution, minutes if no cycle"
-                : "Resolution, minutes"}
-              <input
-                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-                aria-label="Resolution minutes"
-                type="number"
-                min="1"
-                value={draft.resolution}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, resolution: e.target.value }))
-                }
-              />
-            </label>
-          </div>
-          <fieldset
-            className="col-span-full rounded-lg border border-line p-3"
-            data-sla-clock-options=""
-          >
-            <legend className="px-1 text-xs text-muted">Clock</legend>
-            <label className="flex min-w-0 items-center gap-2 text-[12px] pointer-coarse:min-h-11">
-              <input
-                className="size-3.5 flex-none accent-foreground pointer-coarse:size-5"
-                type="checkbox"
-                checked={draft.cycleBound}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, cycleBound: e.target.checked }))
-                }
-              />
-              Resolution follows the task&#39;s cycle, ending when the cycle
-              ends
-            </label>
-            <label className="flex min-w-0 items-center gap-2 text-[12px] pointer-coarse:min-h-11">
-              <input
-                className="size-3.5 flex-none accent-foreground pointer-coarse:size-5"
-                type="checkbox"
-                checked={draft.businessDaysOnly}
-                onChange={(e) =>
-                  setDraft((d) => ({
-                    ...d,
-                    businessDaysOnly: e.target.checked,
-                  }))
-                }
-              />
-              Count weekdays only, in the team&#39;s timezone
-            </label>
-            <label className="flex min-w-0 items-center gap-2 text-[12px] pointer-coarse:min-h-11">
-              <input
-                className="size-3.5 flex-none accent-foreground pointer-coarse:size-5"
-                type="checkbox"
-                checked={draft.applyToOpen}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, applyToOpen: e.target.checked }))
-                }
-              />
-              Start clocks for tasks that are already open
-            </label>
-            <label className="mt-1.5 flex min-w-0 flex-col gap-1 text-[12px]">
-              Stops on
-              <select
-                className="min-w-0 rounded-[7px] border border-line bg-panel pt-0 pr-2.5 pb-0 pl-2.5 text-[13px] text-foreground hover:border-muted pointer-coarse:min-h-11 shell-phone:text-base"
-                aria-label="What stops the clock"
-                value={draft.stopsOn}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, stopsOn: e.target.value }))
-                }
-              >
-                <option value="completed">Completed</option>
-                <option value="started">A started state</option>
-                <option value="prioritized">A priority arrives</option>
-              </select>
-            </label>
-          </fieldset>
-          <fieldset className="col-span-full rounded-lg border border-line p-3">
-            <legend className="px-1 text-xs text-muted">Priorities</legend>
-            {[1, 2, 3, 4].map((p) => (
-              <label
-                className="mr-3 inline-flex min-w-0 items-center gap-1.5 text-[12px] pointer-coarse:min-h-11"
-                key={p}
-              >
-                <input
-                  className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm size-3.5 accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px] flex-none pointer-coarse:size-5"
-                  type="checkbox"
-                  checked={draft.priorities.includes(p)}
-                  onChange={() =>
-                    setDraft((d) => ({
-                      ...d,
-                      priorities: toggle(d.priorities, p),
-                    }))
-                  }
-                />
-                {["Urgent", "High", "Medium", "Low"][p - 1]}
-              </label>
-            ))}
-            {!draft.priorities.length && (
-              <small className="text-xs leading-normal text-muted">
-                Every priority
-              </small>
-            )}
-          </fieldset>
-          <fieldset className="col-span-full rounded-lg border border-line p-3">
-            <legend className="px-1 text-xs text-muted">Pause while in</legend>
-            {pauseStates.map((st) => (
-              <label
-                className="mr-3 inline-flex min-w-0 items-center gap-1.5 text-[12px] pointer-coarse:min-h-11"
-                key={st.id}
-              >
-                <input
-                  className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm size-3.5 accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px] flex-none pointer-coarse:size-5"
-                  type="checkbox"
-                  checked={draft.pauseStateIds.includes(st.id)}
-                  onChange={() =>
-                    setDraft((d) => ({
-                      ...d,
-                      pauseStateIds: d.pauseStateIds.includes(st.id)
-                        ? d.pauseStateIds.filter((x) => x !== st.id)
-                        : [...d.pauseStateIds, st.id],
-                    }))
-                  }
-                />
-                {st.name}
-              </label>
-            ))}
-            {!pauseStates.length && (
-              <small className="text-xs leading-normal text-muted">
-                No states to pick from.
-              </small>
-            )}
-          </fieldset>
-          <button
-            className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-4 pr-4 pt-0 pb-0 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none col-span-full w-full md:col-span-1 md:w-auto focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5] [@media_(max-width:_700px)]:w-full"
-            disabled={
-              busy ||
-              !draft.name.trim() ||
-              (!draft.firstResponse && !draft.resolution)
-            }
-          >
-            {editing ? "Save policy" : "Create policy"}
-          </button>
-        </form>
-        {error && <p role="alert">{error}</p>}
-        {status && <p role="status">{status}</p>}
-        <div
-          className="border border-line rounded-lg shadow-[0_1px_2px_#1b1b1b08] overflow-hidden bg-panel **:data-status-history:max-w-[min(240px,calc(100vw-16px))] **:data-status-menu:max-w-[min(240px,calc(100vw-16px))]"
-          data-issue-card=""
-        >
-          {rows.map((row) => (
-            <div
-              className="flex min-h-14.5 w-full items-center gap-3 border-b border-line bg-(--settings-card) pl-3.5 pr-3.5 pt-3 pb-3 text-left hover:bg-panel hover:bg-(--settings-card)"
-              data-label-row=""
-              key={row.id}
-              data-sla-policy={row.id}
-            >
-              <span>
-                <b className="font-semibold">{row.name}</b>
-                <small className="text-xs leading-normal text-muted">
-                  {row.team ? `Team ${row.team.key}` : "Whole workspace"} ·
-                  first response{" "}
-                  {row.firstResponseMinutes
-                    ? `${row.firstResponseMinutes}m`
-                    : "—"}{" "}
-                  · resolution{" "}
-                  {row.resolutionMinutes ? `${row.resolutionMinutes}m` : "—"}
-                  {row.cycleBound ? " (cycle-bound)" : ""} ·{" "}
-                  {row.businessDaysOnly ? "weekdays" : "every day"} ·{" "}
-                  {row.stopsOn === "started"
-                    ? "stops when started"
-                    : row.stopsOn === "prioritized"
-                      ? "stops when prioritized"
-                      : "stops when completed"}{" "}
-                  · {row.pauseStates.length} pause state
-                  {row.pauseStates.length === 1 ? "" : "s"}
-                </small>
-              </span>
-              <button
-                type="button"
-                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-lg border border-line bg-(--settings-card) pl-2.75 pr-2.75 pt-2 pb-2 text-[11px] text-(--settings-ink) hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 hover:bg-(--settings-subtle) disabled:opacity-[.5]"
-                onClick={() => edit(row)}
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-lg border border-line bg-(--settings-card) pl-2.75 pr-2.75 pt-2 pb-2 text-[11px] text-(--settings-ink) hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 hover:bg-(--settings-subtle) disabled:opacity-[.5]"
-                aria-label={`Archive ${row.name}`}
-                disabled={busy}
-                onClick={archive(row)}
-              >
-                Archive
-              </button>
-            </div>
-          ))}
-          {!rows.length && (
-            <div
-              className="flex flex-col items-start gap-2 bg-(--settings-card) pl-3.5 pr-3.5 pt-3 pb-3"
-              data-sla-empty=""
-            >
-              <p className="m-0 text-[13px] text-(--settings-ink)">
-                No SLA policies yet. A task has no clock until a policy covers
-                it, so nothing is measured today.
-              </p>
-              <p className="m-0 text-xs leading-normal text-(--settings-muted)">
-                The cycle preset creates five workspace policies — Urgent, High,
-                Medium, Low and a triage clock — with every Backlog state
-                pausing the clock.
-              </p>
-              <button
-                className="min-h-8 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-3 pr-3 pt-1.5 pb-1.5 text-[11px] font-[620] text-(--settings-on-accent) hover:bg-foreground/90 hover:transition-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50 shell-phone:min-h-11 pointer-coarse:min-h-11"
-                type="button"
-                data-sla-empty-action=""
-                disabled={busy || presetBusy}
-                onClick={() => void createPreset()}
-              >
-                Start from the cycle preset
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    </section>
-  );
-}
 
 /* HOJA-492 task templates. The pane edits a store the server expands in
  * issueCreate: every field here becomes a real default on a real task, and the
@@ -17436,431 +13943,6 @@ const TASK_TEMPLATE_FIELDS =
   "id name description defaultTitle defaultDescription defaultPriority team{id key} defaultAssignee{id name email} defaultProject{id name} defaultLabels{id name}";
 const TASK_TEMPLATE_SELECTION = "taskTemplate{" + TASK_TEMPLATE_FIELDS + "}";
 
-function TaskTemplatesSettings({ teams }: { teams: Team[] }) {
-  const blank = {
-    name: "",
-    description: "",
-    teamId: "",
-    defaultTitle: "",
-    defaultDescription: "",
-    defaultPriority: "0",
-    defaultAssigneeId: "",
-    defaultProjectId: "",
-    defaultLabelIds: [] as string[],
-  };
-  const [draft, setDraft] = useState(blank),
-    [editing, setEditing] = useState<string | null>(null),
-    [scopeTeam, setScopeTeam] = useState("");
-  const [rows, setRows] = useState<TaskTemplateRow[]>([]),
-    [projectOptions, setProjectOptions] = useState<
-      { id: string; name: string }[]
-    >([]),
-    [labelOptions, setLabelOptions] = useState<
-      { id: string; name: string; teamId: string | null }[]
-    >([]);
-  const [error, setError] = useState(""),
-    [status, setStatus] = useState(""),
-    [busy, setBusy] = useState(false);
-  const people = useMemo(
-    () => [
-      ...new Map(
-        teams.flatMap((t) => t.members?.nodes || []).map((m) => [m.id, m]),
-      ).values(),
-    ],
-    [teams],
-  );
-  const load = useCallback(async () => {
-    try {
-      const d = await gql(TASK_TEMPLATE_QUERY, { teamId: scopeTeam || null });
-      setRows(d.taskTemplates);
-    } catch (e) {
-      setError(errorText(e));
-    }
-  }, [scopeTeam]);
-  useEffect(() => {
-    void load();
-  }, [load]);
-  useEffect(() => {
-    Promise.all([
-      gql("query TemplateProjects{projects(first:100){nodes{id name}}}"),
-      gql(
-        "query TemplateLabels{issueLabels(first:100){nodes{id name team{id}}}}",
-      ),
-    ])
-      .then(([p, l]) => {
-        setProjectOptions(p.projects.nodes);
-        setLabelOptions(
-          l.issueLabels.nodes.map(
-            (x: { id: string; name: string; team?: { id: string } }) => ({
-              id: x.id,
-              name: x.name,
-              teamId: x.team?.id || null,
-            }),
-          ),
-        );
-      })
-      .catch(() => {
-        /* the selects degrade to empty; the server still validates every default it is sent */
-      });
-  }, []);
-  const run = async (fn: () => Promise<void>, done: string) => {
-    setBusy(true);
-    setError("");
-    setStatus("");
-    try {
-      await fn();
-      await load();
-      setStatus(done);
-    } catch (e) {
-      setError(errorText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const input = {
-      name: draft.name.trim(),
-      description: draft.description.trim() || null,
-      teamId: draft.teamId || null,
-      defaultTitle: draft.defaultTitle,
-      defaultDescription: draft.defaultDescription.trim() || null,
-      defaultPriority: Number(draft.defaultPriority),
-      defaultAssigneeId: draft.defaultAssigneeId || null,
-      defaultProjectId: draft.defaultProjectId || null,
-      defaultLabelIds: draft.defaultLabelIds,
-    };
-    await run(
-      async () => {
-        const d = editing
-          ? await gql(
-              "mutation($id:String!,$input:TaskTemplateInput!){taskTemplateUpdate(id:$id,input:$input){success " +
-                TASK_TEMPLATE_SELECTION +
-                "}}",
-              { id: editing, input },
-            )
-          : await gql(
-              "mutation($input:TaskTemplateInput!){taskTemplateCreate(input:$input){success " +
-                TASK_TEMPLATE_SELECTION +
-                "}}",
-              { input },
-            );
-        const ok = editing
-          ? d.taskTemplateUpdate?.success
-          : d.taskTemplateCreate?.success;
-        if (!ok) throw Error("The template was rejected.");
-        setDraft(blank);
-        setEditing(null);
-      },
-      editing ? "Template saved." : "Template created.",
-    );
-  };
-  const edit = (row: TaskTemplateRow) => {
-    setEditing(row.id);
-    setDraft({
-      name: row.name,
-      description: row.description || "",
-      teamId: row.team?.id || "",
-      defaultTitle: row.defaultTitle,
-      defaultDescription: row.defaultDescription || "",
-      defaultPriority: String(row.defaultPriority ?? 0),
-      defaultAssigneeId: row.defaultAssignee?.id || "",
-      defaultProjectId: row.defaultProject?.id || "",
-      defaultLabelIds: row.defaultLabels.map((l) => l.id),
-    });
-  };
-  const archive = (row: TaskTemplateRow) => async () => {
-    if (
-      !(await confirmDialog(
-        `Archive the template "${row.name}"? Tasks already created from it are unchanged; the defaults stop being offered.`,
-        { danger: true },
-      ))
-    )
-      return;
-    await run(async () => {
-      const d = await gql(
-        "mutation($id:String!){taskTemplateArchive(id:$id)}",
-        { id: row.id },
-      );
-      if (!d.taskTemplateArchive)
-        throw Error("The template could not be archived.");
-    }, "Template archived.");
-  };
-  const toggleLabel = (id: string) => {
-    setDraft((d) => ({
-      ...d,
-      defaultLabelIds: d.defaultLabelIds.includes(id)
-        ? d.defaultLabelIds.filter((x) => x !== id)
-        : [...d.defaultLabelIds, id],
-    }));
-  };
-  const visibleLabels = labelOptions.filter(
-    (l) => !draft.teamId || l.teamId === null || l.teamId === draft.teamId,
-  );
-  return (
-    <section
-      className="[--settings-accent:#171717] [--settings-accent-strong:#171717] [--settings-accent-soft:#e9e9e9] [--settings-on-accent:#fff] [--settings-ink:#171717] [--settings-muted:#626262] [--settings-line:#dcdcdc] [--settings-card:#fff] [--settings-subtle:#f0f0f0] [--settings-danger:#242424] [--settings-success:#242424] [:root[data-theme=dark]_&]:[--settings-accent:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-strong:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-soft:#2c2c2c] [:root[data-theme=dark]_&]:[--settings-on-accent:#171717] [:root[data-theme=dark]_&]:[--settings-ink:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-muted:#aaa] [:root[data-theme=dark]_&]:[--settings-line:#353535] [:root[data-theme=dark]_&]:[--settings-card:#1b1b1b] [:root[data-theme=dark]_&]:[--settings-subtle:#262626] [:root[data-theme=dark]_&]:[--settings-danger:#eee] [:root[data-theme=dark]_&]:[--settings-success:#d8d8d8] [font-optical-sizing:auto] ml-auto mr-auto w-[min(100%,var(--ds-settings-column-width))] max-w-(--ds-settings-column-width) min-w-0 p-[var(--ds-settings-column-padding)_var(--ds-settings-column-padding)_64px] text-(--settings-ink) font-(family-name:--hoja-font-ui) md:pt-4 shell-phone:pt-0 [@media_(max-width:_700px)]:pt-0 [@media_(min-width:_881px)]:pl-(--ds-settings-column-padding) [@media_(min-width:_881px)]:pr-(--ds-settings-column-padding) "
-      data-settings-page=""
-      data-settings-pane="issue-templates"
-    >
-      <header
-        className="mt-0 mr-0 mb-8 ml-0 border-0 p-0 [@media_(max-width:_700px)]:mb-6.75 [@media_(max-width:_700px)]:pb-5"
-        data-settings-page-heading=""
-      >
-        <span className="hidden">Issues</span>
-        <h1 className="mt-0 mr-0 mb-2 ml-0 text-(--settings-ink) text-(length:--ds-settings-title-size) font-(--ds-settings-title-weight) leading-(--ds-settings-title-line) tracking-[-.035em] [@media_(max-width:_700px)]:text-(length:--ds-settings-title-size)">
-          Task templates
-        </h1>
-        <p className="mt-0 mr-0 mb-0 ml-0 max-w-full text-[13px] leading-[1.6] text-(--settings-muted) [@media_(max-width:_700px)]:text-[13px]">
-          A template is a stored set of defaults. Creating a task from one — in
-          the web client or through the API — fills only the fields you leave
-          blank, and the task that lands is the same one either way.
-        </p>
-      </header>
-      <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
-        data-settings-group=""
-      >
-        <span className="hidden">Templates</span>
-        <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em]">
-          {editing ? "Edit template" : "New template"}
-        </h2>
-        {editing && (
-          <button
-            className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 text-accent bg-transparent border-0 text-[11px] focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5]"
-            type="button"
-            data-text-action=""
-            onClick={() => {
-              setEditing(null);
-              setDraft(blank);
-            }}
-          >
-            Cancel editing
-          </button>
-        )}
-        <form
-          className="grid grid-cols-1 items-end gap-3.5 sm:grid-cols-2 md:grid-cols-3"
-          data-label-create=""
-          onSubmit={submit}
-        >
-          <label className="min-w-0 text-[12px] grid gap-1.5">
-            Name
-            <input
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-              aria-label="Task template name"
-              required
-              maxLength={80}
-              value={draft.name}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, name: e.target.value }))
-              }
-            />
-          </label>
-          <label className="min-w-0 text-[12px] grid gap-1.5">
-            Scope
-            <select
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              aria-label="Task template scope"
-              value={draft.teamId}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, teamId: e.target.value }))
-              }
-            >
-              <option value="">Whole workspace</option>
-              {teams.map((t) => (
-                <option value={t.id} key={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="min-w-0 text-[12px] grid gap-1.5">
-            Description
-            <textarea
-              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-              aria-label="Task template description"
-              rows={2}
-              value={draft.description}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, description: e.target.value }))
-              }
-            />
-          </label>
-          <label className="min-w-0 text-[12px] grid gap-1.5">
-            Default title
-            <input
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-              aria-label="Default title"
-              required
-              value={draft.defaultTitle}
-              placeholder="Bug: "
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, defaultTitle: e.target.value }))
-              }
-            />
-          </label>
-          <label className="min-w-0 text-[12px] grid gap-1.5">
-            Default description
-            <textarea
-              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5"
-              aria-label="Default description"
-              rows={2}
-              value={draft.defaultDescription}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, defaultDescription: e.target.value }))
-              }
-            />
-          </label>
-          <label className="min-w-0 text-[12px] grid gap-1.5">
-            Default priority
-            <select
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              aria-label="Default priority"
-              value={draft.defaultPriority}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, defaultPriority: e.target.value }))
-              }
-            >
-              <option value="0">No priority</option>
-              <option value="1">Urgent</option>
-              <option value="2">High</option>
-              <option value="3">Medium</option>
-              <option value="4">Low</option>
-            </select>
-          </label>
-          <label className="min-w-0 text-[12px] grid gap-1.5">
-            Default assignee
-            <select
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              aria-label="Default assignee"
-              value={draft.defaultAssigneeId}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, defaultAssigneeId: e.target.value }))
-              }
-            >
-              <option value="">Nobody</option>
-              {people.map((p) => (
-                <option value={p.id} key={p.id}>
-                  {p.name || p.email}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="min-w-0 text-[12px] grid gap-1.5">
-            Default project
-            <select
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              aria-label="Default project"
-              value={draft.defaultProjectId}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, defaultProjectId: e.target.value }))
-              }
-            >
-              <option value="">None</option>
-              {projectOptions.map((p) => (
-                <option value={p.id} key={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <fieldset className="col-span-full rounded-lg border border-line p-3">
-            <legend className="px-1 text-xs text-muted">Default labels</legend>
-            {visibleLabels.map((l) => (
-              <label
-                className="min-w-0 text-[12px] flex items-center gap-2 pointer-coarse:min-h-11"
-                key={l.id}
-              >
-                <input
-                  className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm size-3.5 accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px]"
-                  type="checkbox"
-                  checked={draft.defaultLabelIds.includes(l.id)}
-                  onChange={() => toggleLabel(l.id)}
-                />
-                {l.name}
-              </label>
-            ))}
-            {!visibleLabels.length && <p>No labels yet.</p>}
-          </fieldset>
-          <button
-            className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-4 pr-4 pt-0 pb-0 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none col-span-full w-full md:col-span-1 md:w-auto focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5] [@media_(max-width:_700px)]:w-full"
-            disabled={busy || !draft.name.trim() || !draft.defaultTitle.trim()}
-          >
-            {editing ? "Save template" : "Create template"}
-          </button>
-        </form>
-        {error && <p role="alert">{error}</p>}
-        {status && <p role="status">{status}</p>}
-        <div>
-          <label className="min-w-0 text-xs grid gap-1.5">
-            Show
-            <select
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-[13px] text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base pt-0 pr-2.5 pb-0 pl-2.5 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
-              aria-label="Show task templates for"
-              value={scopeTeam}
-              onChange={(e) => setScopeTeam(e.target.value)}
-            >
-              <option value="">All templates</option>
-              {teams.map((t) => (
-                <option value={t.id} key={t.id}>
-                  {t.name} and inherited
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <div
-          className="border border-line rounded-lg shadow-[0_1px_2px_#1b1b1b08] overflow-hidden bg-panel **:data-status-history:max-w-[min(240px,calc(100vw-16px))] **:data-status-menu:max-w-[min(240px,calc(100vw-16px))]"
-          data-issue-card=""
-        >
-          {rows.map((row) => (
-            <div
-              className="flex min-h-14.5 w-full items-center gap-3 border-b border-line bg-(--settings-card) pl-3.5 pr-3.5 pt-3 pb-3 text-left hover:bg-panel hover:bg-(--settings-card)"
-              data-label-row=""
-              key={row.id}
-              data-task-template={row.id}
-            >
-              <span>
-                <b className="font-semibold">{row.name}</b>
-                <small className="text-xs leading-normal text-muted">
-                  {row.team ? `Team ${row.team.key}` : "Whole workspace"} ·
-                  defaults to “{row.defaultTitle}” · priority{" "}
-                  {row.defaultPriority ?? "unset"} · {row.defaultLabels.length}{" "}
-                  label{row.defaultLabels.length === 1 ? "" : "s"}
-                  {row.defaultAssignee
-                    ? ` · ${row.defaultAssignee.name || row.defaultAssignee.email}`
-                    : ""}
-                </small>
-              </span>
-              <button
-                type="button"
-                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-lg border border-line bg-(--settings-card) pl-2.75 pr-2.75 pt-2 pb-2 text-[11px] text-(--settings-ink) hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 hover:bg-(--settings-subtle) disabled:opacity-[.5]"
-                onClick={() => edit(row)}
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-8 rounded-lg border border-line bg-(--settings-card) pl-2.75 pr-2.75 pt-2 pb-2 text-[11px] text-(--settings-ink) hover:bg-subtle hover:transition-none focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 hover:bg-(--settings-subtle) disabled:opacity-[.5]"
-                aria-label={`Archive ${row.name}`}
-                disabled={busy}
-                onClick={archive(row)}
-              >
-                Archive
-              </button>
-            </div>
-          ))}
-          {!rows.length && (
-            <p className="m-0 pt-4 pr-4 pb-4 pl-4 text-[13px] text-(--settings-muted)">
-              No task templates in this scope yet.
-            </p>
-          )}
-        </div>
-      </div>
-    </section>
-  );
-}
-
 /* HOJA-490. Both panes control something the server actually enforces: every
  * capability listed here is consulted by the resolver or writer on the call it
  * names, and the security policy is read in the auth path (browser session,
@@ -17882,447 +13964,6 @@ const WORKSPACE_PERMISSIONS_QUERY =
   "{workspacePermissions{capability label description memberAllowed}}";
 const WORKSPACE_SECURITY_QUERY =
   "{workspaceSecurityPolicy{idleTimeoutMinutes allowedSigninMethods ipAllowlist updatedAt}}";
-
-function PermissionsSettings() {
-  const [rows, setRows] = useState<WorkspacePermissionRow[]>([]);
-  const [error, setError] = useState(""),
-    [status, setStatus] = useState(""),
-    [busy, setBusy] = useState("");
-  const load = useCallback(async () => {
-    try {
-      const d = await gql(WORKSPACE_PERMISSIONS_QUERY);
-      setRows(d.workspacePermissions);
-    } catch (e) {
-      setError(errorText(e));
-    }
-  }, []);
-  useEffect(() => {
-    void load();
-  }, [load]);
-  const toggle = async (row: WorkspacePermissionRow) => {
-    const next = !row.memberAllowed;
-    setBusy(row.capability);
-    setError("");
-    setStatus("");
-    try {
-      const d = await gql(
-        "mutation($capability:String!,$memberAllowed:Boolean!){workspacePermissionUpdate(capability:$capability,memberAllowed:$memberAllowed){capability memberAllowed}}",
-        { capability: row.capability, memberAllowed: next },
-      );
-      setRows((rs) =>
-        rs.map((r) =>
-          r.capability === row.capability
-            ? { ...r, memberAllowed: d.workspacePermissionUpdate.memberAllowed }
-            : r,
-        ),
-      );
-      setStatus(
-        `${row.label}: ${next ? "members may now use this" : "admins only again"}.`,
-      );
-    } catch (e) {
-      setError(errorText(e));
-    } finally {
-      setBusy("");
-    }
-  };
-  return (
-    <section
-      className="[--settings-accent:#171717] [--settings-accent-strong:#171717] [--settings-accent-soft:#e9e9e9] [--settings-on-accent:#fff] [--settings-ink:#171717] [--settings-muted:#626262] [--settings-line:#dcdcdc] [--settings-card:#fff] [--settings-subtle:#f0f0f0] [--settings-danger:#242424] [--settings-success:#242424] [:root[data-theme=dark]_&]:[--settings-accent:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-strong:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-soft:#2c2c2c] [:root[data-theme=dark]_&]:[--settings-on-accent:#171717] [:root[data-theme=dark]_&]:[--settings-ink:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-muted:#aaa] [:root[data-theme=dark]_&]:[--settings-line:#353535] [:root[data-theme=dark]_&]:[--settings-card:#1b1b1b] [:root[data-theme=dark]_&]:[--settings-subtle:#262626] [:root[data-theme=dark]_&]:[--settings-danger:#eee] [:root[data-theme=dark]_&]:[--settings-success:#d8d8d8] [font-optical-sizing:auto] ml-auto mr-auto w-[min(100%,var(--ds-settings-column-width))] max-w-(--ds-settings-column-width) min-w-0 p-[var(--ds-settings-column-padding)_var(--ds-settings-column-padding)_64px] text-(--settings-ink) font-(family-name:--hoja-font-ui) md:pt-4 shell-phone:pt-0 [@media_(max-width:_700px)]:pt-0 [@media_(min-width:_881px)]:pl-(--ds-settings-column-padding) [@media_(min-width:_881px)]:pr-(--ds-settings-column-padding) "
-      data-settings-page=""
-      data-settings-pane="permissions"
-    >
-      <header
-        className="mt-0 mr-0 mb-8 ml-0 border-0 p-0 [@media_(max-width:_700px)]:mb-6.75 [@media_(max-width:_700px)]:pb-5"
-        data-settings-page-heading=""
-      >
-        <span className="hidden">Administration</span>
-        <h1 className="mt-0 mr-0 mb-2 ml-0 text-(--settings-ink) text-(length:--ds-settings-title-size) font-(--ds-settings-title-weight) leading-(--ds-settings-title-line) tracking-[-.035em] [@media_(max-width:_700px)]:text-(length:--ds-settings-title-size)">
-          Permissions
-        </h1>
-        <p className="mt-0 mr-0 mb-0 ml-0 max-w-full text-[13px] leading-[1.6] text-(--settings-muted) [@media_(max-width:_700px)]:text-[13px]">
-          What a member may do without being made an admin. Admins always hold
-          every capability, and the server refuses a call the role does not hold
-          — the control is not a hidden button.
-        </p>
-      </header>
-      <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
-        data-settings-group=""
-      >
-        <span className="hidden">Access</span>
-        <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em]">
-          Member capabilities
-        </h2>
-        <p
-          className="mt-1.5 mb-5 max-w-147.5 text-[13px] leading-[1.55] text-(--settings-muted)"
-          data-settings-section-intro=""
-        >
-          Every capability starts off, which is how the workspace behaved before
-          this screen existed. Turning one on applies it on the very next
-          request, and turning it off revokes it immediately.
-        </p>
-        {error && <p role="alert">{error}</p>}
-        {status && <p role="status">{status}</p>}
-        <div
-          className="border border-line rounded-lg shadow-[0_1px_2px_#1b1b1b08] overflow-hidden bg-panel **:data-status-history:max-w-[min(240px,calc(100vw-16px))] **:data-status-menu:max-w-[min(240px,calc(100vw-16px))]"
-          data-issue-card=""
-        >
-          {rows.map((row) => (
-            <div
-              className="flex min-h-14.5 w-full items-center gap-3 border-b border-line bg-(--settings-card) pl-3.5 pr-3.5 pt-3 pb-3 text-left hover:bg-panel hover:bg-(--settings-card)"
-              data-label-row=""
-              key={row.capability}
-            >
-              <span
-                className="flex min-w-0 flex-auto flex-col gap-0.5"
-                data-permission-copy=""
-              >
-                <b className="font-semibold">{row.label}</b>
-                <small className="text-[11px] leading-normal text-(--settings-muted)">
-                  {row.description}
-                </small>
-                <small
-                  className="font-(family-name:--settings-mono,ui-monospace,monospace) text-[11px] text-(--settings-muted) leading-normal"
-                  data-permission-code=""
-                >
-                  {row.capability}
-                </small>
-              </span>
-              <label
-                className="inline-flex flex-none items-center gap-2 whitespace-nowrap text-[11px] text-(--settings-ink) min-w-0 pointer-coarse:min-h-11"
-                data-permission-toggle=""
-              >
-                <input
-                  className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm w-3.5 h-3.5 flex-none accent-foreground pointer-coarse:size-5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px]"
-                  type="checkbox"
-                  aria-label={`Members may ${row.label.toLowerCase()}`}
-                  checked={row.memberAllowed}
-                  disabled={busy === row.capability}
-                  onChange={() => void toggle(row)}
-                />
-                <span>
-                  {row.memberAllowed ? "Members allowed" : "Admins only"}
-                </span>
-              </label>
-            </div>
-          ))}
-          {!rows.length && <p>No capabilities loaded.</p>}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function SecuritySettings() {
-  const [policy, setPolicy] = useState<WorkspaceSecurityPolicyRow | null>(null);
-  const [idle, setIdle] = useState(""),
-    [methods, setMethods] = useState<string[]>([]),
-    [allowlist, setAllowlist] = useState("");
-  const [error, setError] = useState(""),
-    [status, setStatus] = useState(""),
-    [busy, setBusy] = useState(false);
-  const load = useCallback(async () => {
-    try {
-      const d = await gql(WORKSPACE_SECURITY_QUERY);
-      const p = d.workspaceSecurityPolicy;
-      setPolicy(p);
-      setIdle(p.idleTimeoutMinutes ? String(p.idleTimeoutMinutes) : "");
-      setMethods(p.allowedSigninMethods);
-      setAllowlist(p.ipAllowlist.join("\n"));
-    } catch (e) {
-      setError(errorText(e));
-    }
-  }, []);
-  useEffect(() => {
-    void load();
-  }, [load]);
-  const effectiveMethods =
-    methods.length === 0 ? ["password", "google"] : methods;
-  const toggleMethod = (method: string) => {
-    const next = effectiveMethods.includes(method)
-      ? effectiveMethods.filter((m) => m !== method)
-      : [...effectiveMethods, method];
-    if (!next.length) return;
-    setMethods(next.length === 2 ? [] : next);
-  };
-  const save = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setBusy(true);
-    setError("");
-    setStatus("");
-    const minutes = idle.trim() === "" ? null : Number(idle.trim());
-    if (
-      minutes !== null &&
-      (!Number.isInteger(minutes) || minutes < 1 || minutes > 10080)
-    ) {
-      setError(
-        "Idle timeout must be a whole number of minutes between 1 and 10080, or empty for none.",
-      );
-      setBusy(false);
-      return;
-    }
-    const list = allowlist
-      .split("\n")
-      .map((v) => v.trim())
-      .filter(Boolean);
-    try {
-      const d = await gql(
-        "mutation($input:WorkspaceSecurityPolicyInput!){workspaceSecurityUpdate(input:$input){idleTimeoutMinutes allowedSigninMethods ipAllowlist updatedAt}}",
-        {
-          input: {
-            idleTimeoutMinutes: minutes,
-            allowedSigninMethods: methods,
-            ipAllowlist: list,
-          },
-        },
-      );
-      const p = d.workspaceSecurityUpdate;
-      setPolicy(p);
-      setIdle(p.idleTimeoutMinutes ? String(p.idleTimeoutMinutes) : "");
-      setMethods(p.allowedSigninMethods);
-      setAllowlist(p.ipAllowlist.join("\n"));
-      setStatus(
-        "Security policy saved. It applies to the next request, not the next sign-in only.",
-      );
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <section
-      className="[--settings-accent:#171717] [--settings-accent-strong:#171717] [--settings-accent-soft:#e9e9e9] [--settings-on-accent:#fff] [--settings-ink:#171717] [--settings-muted:#626262] [--settings-line:#dcdcdc] [--settings-card:#fff] [--settings-subtle:#f0f0f0] [--settings-danger:#242424] [--settings-success:#242424] [:root[data-theme=dark]_&]:[--settings-accent:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-strong:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-soft:#2c2c2c] [:root[data-theme=dark]_&]:[--settings-on-accent:#171717] [:root[data-theme=dark]_&]:[--settings-ink:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-muted:#aaa] [:root[data-theme=dark]_&]:[--settings-line:#353535] [:root[data-theme=dark]_&]:[--settings-card:#1b1b1b] [:root[data-theme=dark]_&]:[--settings-subtle:#262626] [:root[data-theme=dark]_&]:[--settings-danger:#eee] [:root[data-theme=dark]_&]:[--settings-success:#d8d8d8] [font-optical-sizing:auto] ml-auto mr-auto w-[min(100%,var(--ds-settings-column-width))] max-w-(--ds-settings-column-width) min-w-0 p-[var(--ds-settings-column-padding)_var(--ds-settings-column-padding)_64px] text-(--settings-ink) font-(family-name:--hoja-font-ui) md:pt-4 shell-phone:pt-0 [@media_(max-width:_700px)]:pt-0 [@media_(min-width:_881px)]:pl-(--ds-settings-column-padding) [@media_(min-width:_881px)]:pr-(--ds-settings-column-padding) "
-      data-settings-page=""
-      data-settings-pane="security"
-    >
-      <header
-        className="mt-0 mr-0 mb-8 ml-0 border-0 p-0 [@media_(max-width:_700px)]:mb-6.75 [@media_(max-width:_700px)]:pb-5"
-        data-settings-page-heading=""
-      >
-        <span className="hidden">Administration</span>
-        <h1 className="mt-0 mr-0 mb-2 ml-0 text-(--settings-ink) text-(length:--ds-settings-title-size) font-(--ds-settings-title-weight) leading-(--ds-settings-title-line) tracking-[-.035em] [@media_(max-width:_700px)]:text-(length:--ds-settings-title-size)">
-          Security
-        </h1>
-        <p className="mt-0 mr-0 mb-0 ml-0 max-w-full text-[13px] leading-[1.6] text-(--settings-muted) [@media_(max-width:_700px)]:text-[13px]">
-          Session and sign-in policy, enforced in the server's auth path. A
-          setting that could not be enforced is not shown here.
-        </p>
-      </header>
-      <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
-        data-settings-group=""
-      >
-        <span className="hidden">Sessions</span>
-        <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em]">
-          Session policy
-        </h2>
-        <p
-          className="mt-1.5 mb-5 max-w-147.5 text-[13px] leading-[1.55] text-(--settings-muted)"
-          data-settings-section-intro=""
-        >
-          The idle timeout is measured from the last request. A browser session
-          past it is refused on the next request, and an open realtime
-          connection stops being revalidated.
-        </p>
-        <form
-          className="grid grid-cols-2 items-end gap-3.5 md:grid-cols-3 flex flex-wrap items-start"
-          data-label-create=""
-          data-security-form=""
-          onSubmit={save}
-        >
-          <label className="min-w-0 text-[12px] grid gap-1.5 max-sm:basis-full max-sm:col-span-full">
-            Idle timeout, minutes
-            <input
-              className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5 py-2"
-              aria-label="Idle timeout minutes"
-              inputMode="numeric"
-              placeholder="No idle timeout"
-              value={idle}
-              onChange={(e) => setIdle(e.target.value)}
-            />
-          </label>
-          <fieldset
-            className="col-span-full mt-0 mr-0 mb-0 ml-0 flex flex-wrap gap-x-4 gap-y-2 rounded-lg border border-line pl-3 pr-3 pt-2.5 pb-2.5 min-w-0 flex-1 basis-64"
-            data-project-template-teams=""
-          >
-            <legend className="pl-1 pr-1 text-[11px] text-(--settings-muted)">
-              Allowed sign-in methods
-            </legend>
-            <label className="min-w-0 text-[12px] flex items-center gap-2 pointer-coarse:min-h-11">
-              <input
-                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm size-3.5 accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px]"
-                type="checkbox"
-                aria-label="Allow email and password sign-in"
-                checked={effectiveMethods.includes("password")}
-                onChange={() => toggleMethod("password")}
-              />
-              Email and password
-            </label>
-            <label className="min-w-0 text-[12px] flex items-center gap-2 pointer-coarse:min-h-11">
-              <input
-                className="min-w-0 rounded-[7px] border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm size-3.5 accent-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:text-[16px]"
-                type="checkbox"
-                aria-label="Allow Google sign-in"
-                checked={effectiveMethods.includes("google")}
-                onChange={() => toggleMethod("google")}
-              />
-              Google
-            </label>
-            <small className="text-[11px] leading-normal text-(--settings-muted)">
-              {methods.length === 0
-                ? "Both methods are allowed. Untick one to restrict sign-in to the other."
-                : `Sign-in is limited to ${methods.join(" and ")}.`}
-            </small>
-          </fieldset>
-          <label className="min-w-0 text-[12px] grid gap-1.5 max-sm:basis-full max-sm:col-span-full">
-            IP allowlist, one CIDR per line
-            <textarea
-              className="min-w-0 rounded-lg border border-line bg-panel text-base text-foreground hover:border-muted read-only:bg-subtle read-only:text-muted md:text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 max-md:text-base placeholder:text-muted focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px] px-2.5 py-2"
-              aria-label="IP allowlist"
-              rows={3}
-              placeholder={"203.0.113.0/24\n198.51.100.7"}
-              value={allowlist}
-              onChange={(e) => setAllowlist(e.target.value)}
-            />
-          </label>
-          <button
-            className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 min-h-9 rounded-lg border border-foreground bg-(--settings-accent-strong) pl-4 pr-4 pt-0 pb-0 text-[12px] font-[620] text-(--settings-on-accent) shadow-[0_1px_2px_#24242412] hover:bg-foreground/90 hover:transition-none col-span-full w-full md:col-span-1 md:w-auto focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 disabled:opacity-[.5] [@media_(max-width:_700px)]:w-full"
-            disabled={busy}
-          >
-            Save security policy
-          </button>
-        </form>
-        {error && <p role="alert">{error}</p>}
-        {status && <p role="status">{status}</p>}
-        {policy && (
-          <p
-            className="mt-1.5 mb-5 max-w-147.5 text-[13px] leading-[1.55] text-(--settings-muted)"
-            data-settings-section-intro=""
-          >
-            Current:{" "}
-            {policy.idleTimeoutMinutes
-              ? `${policy.idleTimeoutMinutes} minute idle timeout`
-              : "no idle timeout"}
-            ;{" "}
-            {policy.allowedSigninMethods.length
-              ? policy.allowedSigninMethods.join(", ") + " sign-in"
-              : "any sign-in method"}
-            ;{" "}
-            {policy.ipAllowlist.length
-              ? `${policy.ipAllowlist.length} allowlisted range${policy.ipAllowlist.length === 1 ? "" : "s"}`
-              : "no IP restriction"}
-            .
-          </p>
-        )}
-        <p
-          className="mt-1.5 mb-5 max-w-147.5 text-[13px] leading-[1.55] text-(--settings-muted)"
-          data-settings-section-intro=""
-        >
-          An admin is exempt from the IP allowlist so a wrong list cannot lock
-          the workspace out of this screen, and the workspace owner is exempt
-          from the sign-in method restriction. SSO with an external identity
-          provider and domain capture are not offered: the server has no
-          SAML/OIDC tenant flow to enforce them, so there is no control here for
-          them.
-        </p>
-      </div>
-    </section>
-  );
-}
-
-/* A pane Hoja cannot serve. It states what the backend is missing and offers the real
- * alternative, instead of rendering a control that would silently do nothing. */
-function SettingsUnavailable({
-  name,
-  needs,
-  issue,
-  onBack,
-}: {
-  name: string;
-  needs: string;
-  issue: string;
-  onBack: () => void;
-}) {
-  return (
-    <section
-      className="[--settings-accent:#171717] [--settings-accent-strong:#171717] [--settings-accent-soft:#e9e9e9] [--settings-on-accent:#fff] [--settings-ink:#171717] [--settings-muted:#626262] [--settings-line:#dcdcdc] [--settings-card:#fff] [--settings-subtle:#f0f0f0] [--settings-danger:#242424] [--settings-success:#242424] [:root[data-theme=dark]_&]:[--settings-accent:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-strong:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-soft:#2c2c2c] [:root[data-theme=dark]_&]:[--settings-on-accent:#171717] [:root[data-theme=dark]_&]:[--settings-ink:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-muted:#aaa] [:root[data-theme=dark]_&]:[--settings-line:#353535] [:root[data-theme=dark]_&]:[--settings-card:#1b1b1b] [:root[data-theme=dark]_&]:[--settings-subtle:#262626] [:root[data-theme=dark]_&]:[--settings-danger:#eee] [:root[data-theme=dark]_&]:[--settings-success:#d8d8d8] [font-optical-sizing:auto] ml-auto mr-auto w-[min(100%,var(--ds-settings-column-width))] max-w-(--ds-settings-column-width) min-w-0 p-[var(--ds-settings-column-padding)_var(--ds-settings-column-padding)_64px] text-(--settings-ink) font-(family-name:--hoja-font-ui) md:pt-4 shell-phone:pt-0 [@media_(max-width:_700px)]:pt-0 [@media_(min-width:_881px)]:pl-(--ds-settings-column-padding) [@media_(min-width:_881px)]:pr-(--ds-settings-column-padding) "
-      data-settings-page=""
-      data-settings-pane="unavailable"
-    >
-      <header
-        className="mt-0 mr-0 mb-8 ml-0 border-0 p-0 [@media_(max-width:_700px)]:mb-6.75 [@media_(max-width:_700px)]:pb-5"
-        data-settings-page-heading=""
-      >
-        <button
-          className="hidden focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:mb-3 shell-phone:bg-transparent shell-phone:text-muted"
-          data-settings-mobile-back=""
-          onClick={onBack}
-        >
-          ← Settings
-        </button>
-        <span className="hidden">Not yet available</span>
-        <h1 className="mt-0 mr-0 mb-2 ml-0 text-(--settings-ink) text-(length:--ds-settings-title-size) font-(--ds-settings-title-weight) leading-(--ds-settings-title-line) tracking-[-.035em] [@media_(max-width:_700px)]:text-(length:--ds-settings-title-size)">
-          {name}
-        </h1>
-        <p className="mt-0 mr-0 mb-0 ml-0 max-w-full text-[13px] leading-[1.6] text-(--settings-muted) [@media_(max-width:_700px)]:text-[13px]">
-          {needs}
-        </p>
-      </header>
-      <div
-        className="mb-9 w-full min-w-0 max-w-none border-0 rounded-none bg-transparent pt-0 pr-0 pb-0 pl-0 text-(--settings-ink) shadow-[none] md:mb-9 [@media_(max-width:_700px)]:mb-7"
-        data-settings-group=""
-      >
-        <h2 className="mt-0 mr-0 mb-0 ml-0 text-(--settings-ink) text-(length:--ds-settings-section-size) font-(--ds-settings-section-weight) leading-(--ds-settings-section-line) tracking-[-.035em]">
-          What this screen needs
-        </h2>
-        <p
-          className="mt-1.5 mb-5 max-w-147.5 text-[13px] leading-[1.55] text-(--settings-muted)"
-          data-settings-section-intro=""
-        >
-          This entry exists so the settings shell matches the reference, and so
-          the gap is visible rather than hidden. There is no control here to
-          click, because a control with nothing behind it would be a lie.
-        </p>
-        <p
-          className="mt-1.5 mb-5 max-w-147.5 text-[13px] leading-[1.55] text-(--settings-muted)"
-          data-settings-section-intro=""
-        >
-          The work is tracked as <b className="font-semibold">{issue}</b>, a
-          sub-issue of HOJA-421. Until it lands, this screen stays listed and
-          stays marked.
-        </p>
-      </div>
-    </section>
-  );
-}
-function SettingsNotFound({ onBack }: { onBack: () => void }) {
-  return (
-    <section
-      className="[--settings-accent:#171717] [--settings-accent-strong:#171717] [--settings-accent-soft:#e9e9e9] [--settings-on-accent:#fff] [--settings-ink:#171717] [--settings-muted:#626262] [--settings-line:#dcdcdc] [--settings-card:#fff] [--settings-subtle:#f0f0f0] [--settings-danger:#242424] [--settings-success:#242424] [:root[data-theme=dark]_&]:[--settings-accent:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-strong:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-accent-soft:#2c2c2c] [:root[data-theme=dark]_&]:[--settings-on-accent:#171717] [:root[data-theme=dark]_&]:[--settings-ink:#f2f2f2] [:root[data-theme=dark]_&]:[--settings-muted:#aaa] [:root[data-theme=dark]_&]:[--settings-line:#353535] [:root[data-theme=dark]_&]:[--settings-card:#1b1b1b] [:root[data-theme=dark]_&]:[--settings-subtle:#262626] [:root[data-theme=dark]_&]:[--settings-danger:#eee] [:root[data-theme=dark]_&]:[--settings-success:#d8d8d8] [font-optical-sizing:auto] ml-auto mr-auto w-[min(100%,var(--ds-settings-column-width))] max-w-(--ds-settings-column-width) min-w-0 p-[var(--ds-settings-column-padding)_var(--ds-settings-column-padding)_64px] text-(--settings-ink) font-(family-name:--hoja-font-ui) md:pt-4 shell-phone:pt-0 [@media_(max-width:_700px)]:pt-0 [@media_(min-width:_881px)]:pl-(--ds-settings-column-padding) [@media_(min-width:_881px)]:pr-(--ds-settings-column-padding) "
-      data-settings-page=""
-    >
-      <header
-        className="mt-0 mr-0 mb-8 ml-0 border-0 p-0 [@media_(max-width:_700px)]:mb-6.75 [@media_(max-width:_700px)]:pb-5"
-        data-settings-page-heading=""
-      >
-        <button
-          className="hidden focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-foreground disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-accent shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 shell-phone:mb-3 shell-phone:bg-transparent shell-phone:text-muted"
-          data-settings-mobile-back=""
-          onClick={onBack}
-        >
-          ← Settings
-        </button>
-        <h1 className="mt-0 mr-0 mb-2 ml-0 text-(--settings-ink) text-(length:--ds-settings-title-size) font-(--ds-settings-title-weight) leading-(--ds-settings-title-line) tracking-[-.035em] [@media_(max-width:_700px)]:text-(length:--ds-settings-title-size)">
-          Page not found
-        </h1>
-        <p className="mt-0 mr-0 mb-0 ml-0 max-w-full text-[13px] leading-[1.6] text-(--settings-muted) [@media_(max-width:_700px)]:text-[13px]">
-          This settings page does not exist.
-        </p>
-      </header>
-    </section>
-  );
-}
 
 function CreateWorkspacePage({
   onCreated,

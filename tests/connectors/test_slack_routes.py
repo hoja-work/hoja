@@ -143,7 +143,7 @@ def test_callback_stores_the_sealed_user_token_and_lists_the_workspace(tmp_path)
                 follow_redirects=False,
             )
         assert res.status_code == 302
-        assert res.headers["location"] == "/?connector=slack-connected"
+        assert res.headers["location"] == "/workspace/settings/connections?connector=slack-connected"
         listing = client.get(
             "/api/connectors/accounts",
             headers={"Authorization": f"Bearer {admin['token']}"},

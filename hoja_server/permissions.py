@@ -102,6 +102,8 @@ SDL = gql(
       workspacePermissions: [WorkspacePermission!]!
       workspaceSecurityPolicy: WorkspaceSecurityPolicy!
       workspaceFeatures: WorkspaceFeatures!
+      "The capabilities the signed-in member holds right now (admins hold all of them). The UI gates on this, never on admin alone."
+      viewerCapabilities: [String!]!
     }
 
     extend type Mutation {
@@ -305,6 +307,15 @@ def r_workspace_permissions(_, info):
          "memberAllowed": grants[capability]}
         for capability, label, description in CAPABILITIES
     ]
+
+
+@query.field("viewerCapabilities")
+def r_viewer_capabilities(_, info):
+    store, org, uid = _ctx(info)
+    return sorted(
+        capability for capability in CAPABILITY_IDS
+        if can_for_engine(store.engine, org, uid, capability)
+    )
 
 
 @mutation.field("workspacePermissionUpdate")

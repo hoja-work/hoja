@@ -689,7 +689,7 @@ def r_policies(_, info, teamId=None):
         return [_serialize(conn, org, r) for r in rows]
 
 
-def _values(conn, org, inp):
+def _values(conn, org, inp, *, creating=True):
     team_id = inp.get("teamId") or None
     if team_id:
         found = conn.execute(select(team.c.id).where(and_(
@@ -705,7 +705,7 @@ def _values(conn, org, inp):
     stops_on = inp.get("stopsOn")
     if stops_on is not None and stops_on not in STOPS_ON:
         _bad("stopsOn", "stopsOn must be one of " + ", ".join(STOPS_ON) + ".")
-    return {
+    out = {
         "team_id": team_id,
         "name": (inp.get("name") or "").strip() or _bad("name", "name must not be empty."),
         "applies_priorities": _priority_list(inp.get("appliesPriorities")),
@@ -715,8 +715,15 @@ def _values(conn, org, inp):
         "cycle_bound": bool(inp.get("cycleBound")),
         "stops_on": stops_on,
         "business_days_only": bool(inp.get("businessDaysOnly")),
-        "enabled": True if inp.get("enabled") is None else bool(inp["enabled"]),
     }
+    # A new policy starts enabled unless told otherwise. An update only touches
+    # ``enabled`` when the input names it: editing a disabled policy's targets
+    # must not quietly turn it back on (HOJA-734).
+    if inp.get("enabled") is not None:
+        out["enabled"] = bool(inp["enabled"])
+    elif creating:
+        out["enabled"] = True
+    return out
 
 
 def _name_taken(conn, org, team_id, name, exclude=None):
@@ -760,7 +767,7 @@ def m_update(_, info, id, input):
             sla_policy.c.archived_at.is_(None)))).first()
         if not existing:
             raise GraphQLError("SLA policy not found.", extensions={"code": "NOT_FOUND"})
-        values = _values(conn, org, input)
+        values = _values(conn, org, input, creating=False)
         if _name_taken(conn, org, values["team_id"], values["name"], exclude=id):
             _bad("name", f"A policy named '{values['name']}' already exists here.")
         conn.execute(sla_policy.update().where(and_(

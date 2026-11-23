@@ -12,8 +12,9 @@
  *     same sheet silently owning a property (live rendered a 40px serif settings title while
  *     the source said 14px), and a design-layer class beating a responsive rule. The gate
  *     asserts a single title declaration chain and :where() scoping on every --ds- rule.
- *  4. GEOMETRY — a fixture built from the same classes at 390/1024/1440: nav width, nav row
- *     height, content column cap, and zero horizontal overflow.
+ *  4. GEOMETRY — measured in the real app by scripts/settings-e2e/run-all.cjs (one sidebar,
+ *     244px persistent / drawer below 881px, column cap 640, zero overflow at 320/390/1440).
+ *     This gate checks the structure that makes that geometry hold.
  *
  * Run against a pristine tree with `--root <frontend dir>` to prove it fails before the change:
  *   node scripts/check-settings.mjs --root /path/to/untouched/app/frontend
@@ -36,13 +37,8 @@ const ok = (m) => console.log('  ok  ' + m);
 const read = (p) => readFileSync(p, 'utf8');
 
 const tsx = read(join(frontend, 'src/main.tsx'));
-const settingsCss = read(join(frontend, 'src/settings.css'));
 const tokensCss = read(join(frontend, 'src/design/tokens.css'));
 const designCss = read(join(frontend, 'src/design/design.css'));
-const mobileCss = read(join(frontend, 'src/mobile-touch.css'));
-const stylesCss = read(join(frontend, 'src/styles.css'));
-/* The Billing pane composes the issue list's classes, so its geometry is measured here. */
-const graphCss = read(join(frontend, 'src/graph/styles.css'));
 
 /* ------------------------------------------------------------------- 1. spec ---- */
 const specPath = join(repo, 'reference', 'linear', 'SETTINGS-SPEC.md');
@@ -96,61 +92,35 @@ for (const [name, want] of Object.entries(MEASURED)) {
 }
 if (!fail.some((f) => f.startsWith('tokens.css:'))) ok('every measured settings token holds its SETTINGS-SPEC value');
 
-/* settings.css must consume the tokens, not restate the numbers. */
+/* The settings composites must consume the tokens, not restate the numbers. Every settings
+   screen renders its title, sections and rows through src/settings/ui, so binding the
+   composites binds every screen. */
+const layoutTsx = read(join(frontend, 'src/settings/ui/layout.tsx'));
 const BOUND = [
-  // The nav is one of two measured widths: 244px persistent, 330px as a drawer. Both are allowed
-  // here; the breakpoint that chooses between them is asserted separately below.
-  ['.settings-sidebar', 'width', ['--ds-settings-nav-width', '--ds-settings-nav-drawer-width']],
-  ['.settings-sidebar', 'flex-basis', ['--ds-settings-nav-width', '--ds-settings-nav-drawer-width']],
-  ['.settings-sidebar .nav-item', 'height', '--ds-settings-nav-row-height'],
-  ['.settings-sidebar .nav-item', 'border-radius', '--ds-settings-nav-row-radius'],
-  ['.settings-sidebar .nav-item', 'font-size', '--ds-settings-nav-font-size'],
-  ['.settings-page', 'max-width', '--ds-settings-column-width'],
-  ['.settings-page-heading h1', 'font-size', '--ds-settings-title-size'],
-  ['.settings-page-heading h1', 'font-weight', '--ds-settings-title-weight'],
-  ['.settings-page-heading h1', 'line-height', '--ds-settings-title-line'],
-  ['.settings-page .settings-group h2', 'font-size', '--ds-settings-section-size'],
+  ['page column', 'max-w-(--ds-settings-column-width)'],
+  ['page gutter', 'px-(--ds-settings-column-padding)'],
+  ['page title size', 'text-(length:--ds-settings-title-size)'],
+  ['page title weight', 'font-(--ds-settings-title-weight)'],
+  ['page title line', 'leading-(--ds-settings-title-line)'],
+  ['section heading size', 'text-(length:--ds-settings-section-size)'],
+  ['section heading weight', 'font-(--ds-settings-section-weight)'],
+  ['row height', 'min-h-(--ds-settings-row-height)'],
+  ['row padding', 'p-(--ds-settings-row-padding)'],
+  ['card radius', 'rounded-(--ds-settings-row-radius)'],
 ];
-/* Every declaration block whose selector list contains this selector, exactly — not by
-   position in the file, so a rule that moved or was reordered is still found. */
-const stripComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '');
-const cssRules = [...stripComments(settingsCss).matchAll(/([^{}]+)\{([^{}]*)\}/g)]
-  .map((m) => ({selectors: m[1].split(',').map((x) => x.trim()), body: m[2]}));
-const ruleBodies = (sel) => cssRules.filter((r) => r.selectors.includes(sel)).map((r) => r.body);
-/* Every rule that declares the property must read the token. "At least one does" is not enough:
-   settings.css has three generations of overrides, and today's bug was a later duplicate silently
-   restating 34px over the measured 28px. */
-for (const [sel, prop, tokenSpec] of BOUND) {
-  const tokensOk = [].concat(tokenSpec);
-  const bodies = ruleBodies(sel);
-  if (!bodies.length) { fail.push(`settings.css: no ${sel} rule`); continue; }
-  const declaring = bodies.filter((b) => new RegExp(`(^|[;{])\\s*${prop}\\s*:`).test(b));
-  const wrong = declaring.filter((b) => !tokensOk.some((tk) => new RegExp(`(^|[;{])\\s*${prop}\\s*:\\s*[^;]*var\\(${tk}\\)`).test(b)));
-  if (!declaring.length) fail.push(`settings.css: ${sel} never declares ${prop}`);
-  else if (wrong.length) {
-    const literal = (wrong[0].match(new RegExp(`${prop}\\s*:\\s*([^;]+)`)) || [])[1];
-    fail.push(`settings.css: ${sel} { ${prop} } is restated as "${String(literal).trim()}" in ${wrong.length} rule(s) that do not read ${tokensOk.join(' or ')}; ` +
-      'the later duplicate wins at runtime');
-  }
-}
-if (!fail.some((f) => f.startsWith('settings.css: '))) ok('settings.css reads the measured tokens for every shell dimension');
-
-/* The shell must not restate the old, wrong numbers. */
-for (const dead of ['width: 264px', 'flex-basis: 264px', 'height: 30px; min-height: 30px', 'max-width: 840px', 'max-width: 1040px']) {
-  if (settingsCss.includes(dead)) fail.push(`settings.css: still contains the pre-measurement value "${dead}"`);
-}
+for (const [what, cls] of BOUND) if (!layoutTsx.includes(cls)) fail.push(`settings/ui/layout.tsx: the ${what} no longer reads its token (${cls})`);
+if (!fail.some((f) => f.startsWith('settings/ui/layout.tsx'))) ok('the settings composites read the measured tokens for every page dimension');
 
 /* ---------------------------------------------------------------- 3. cascade ---- */
-/* One title declaration chain: every .settings-page-heading h1 rule must agree on size. */
-const titleSizes = [...settingsCss.matchAll(/\.settings-page-heading h1\s*\{([^}]*)\}/g)]
-  .map((m) => (m[1].match(/font-size:\s*([^;]+)/) || [])[1]?.trim())
-  .filter(Boolean);
-const distinct = [...new Set(titleSizes)];
-if (distinct.length > 1) {
-  fail.push(`settings.css: ${titleSizes.length} .settings-page-heading h1 rules disagree on font-size (${distinct.join(' | ')}); ` +
-    'whichever comes last wins at runtime, which is how live rendered a 40px serif title while the source said 14px');
-}
-if (!fail.some((f) => f.startsWith('settings.css: '))) ok('the settings title has one declaration chain, not five competing ones');
+/* One title declaration chain: no section writes its own <h1>/<h2>; titles come from
+   SettingsPage/SettingsSection only (the 40px-serif regression was five competing title rules). */
+const sectionsDir = join(frontend, 'src/settings/sections');
+const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
+  d.isDirectory() ? walk(join(dir, d.name)) : d.name.endsWith('.tsx') ? [join(dir, d.name)] : []);
+const sectionFiles = walk(sectionsDir);
+const ownTitles = sectionFiles.filter((f) => /<h1[\s>]/.test(read(f)));
+if (ownTitles.length) fail.push(`sections write their own <h1>: ${ownTitles.map((f) => f.slice(sectionsDir.length + 1)).join(', ')}`);
+else ok(`the settings title has one declaration chain (SettingsPage), across ${sectionFiles.length} section files`);
 
 /* A design-layer class must never out-rank a media query. */
 const designRules = designCss.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -160,20 +130,34 @@ const unscoped = [...designRules.matchAll(/(?:^|\})\s*([^{}@]+)\{/g)]
 if (unscoped.length) fail.push(`design.css: ${unscoped.length} --ds- rule(s) are not :where()-scoped, so they beat responsive rules: ${unscoped.slice(0, 3).join(', ')}`);
 else ok('every design-layer rule is :where()-scoped, so a media query always wins');
 
-const inventory = (tsx.match(/const SETTINGS_UNAVAILABLE[\s\S]*?\n\];/) || [''])[0];
-const entries = [...inventory.matchAll(/\['([a-z0-9-]+)',\s*'([^']+)',\s*'([^']+)',\s*'(HOJA-\d+)'\]/g)];
-if (entries.length < 3) fail.push('main.tsx: SETTINGS_UNAVAILABLE is missing or empty; unbacked panes would be silently absent');
-else {
-  const keys = [...new Set(entries.map((e) => e[4]))];
-  ok(`the nav marks ${entries.length} unbacked panes, each naming the backend it needs and its Hoja issue (${keys.join(', ')})`);
-}
+/* ----------------------------------------------------- one registry, one sidebar ---- */
+const registry = read(join(frontend, 'src/settings/registry.ts'));
+const navIds = [...registry.matchAll(/\{\s*id:\s*"([a-z0-9-]+)"/g)].map((m) => m[1]);
+const sectionIds = readdirSync(sectionsDir).filter((f) => f.endsWith('.tsx')).map((f) => f.replace(/\.tsx$/, ''));
+if (!navIds.length) fail.push('registry.ts: no sections could be read');
+const noScreen = navIds.filter((id) => !sectionIds.includes(id));
+const noEntry = sectionIds.filter((id) => !navIds.includes(id));
+if (noScreen.length) fail.push(`registry.ts offers sections with no screen: ${noScreen.join(', ')}`);
+if (noEntry.length) fail.push(`sections/ has screens the registry does not list: ${noEntry.join(', ')}`);
+if (navIds.length && !noScreen.length && !noEntry.length) ok(`registry ⇔ screens: all ${navIds.length} sections have exactly one screen`);
 
-/* Every settings pane the shell offers must be backed by a field the server
- * actually declares, and every pane it marks unavailable must not be.
- * This used to be a hardcoded cycles/extensions special case, so a pane could
- * be wired into the nav with no SDL behind it — a control with nothing under
- * it, which is exactly what this shell promises never to render. Both
- * directions are now checked for every pane. */
+const sidebars = (tsx.match(/id="workspace-sidebar"/g) || []).length;
+if (sidebars !== 1) fail.push(`main.tsx: ${sidebars} app sidebars (id="workspace-sidebar"); there must be exactly one`);
+if (/aria-label="Settings navigation"/.test(tsx)) fail.push('main.tsx: a second, settings-only sidebar landmark exists');
+if (/function SettingsSidebar\b/.test(tsx)) fail.push('main.tsx: a separate SettingsSidebar exists again');
+if (!/<SettingsNav\b/.test(tsx)) fail.push('main.tsx: the settings navigation is not rendered in the app sidebar');
+if (!fail.some((f) => f.startsWith('main.tsx'))) ok('one sidebar: settings navigation renders inside the app\'s single <aside>');
+const navTsx = read(join(frontend, 'src/settings/SettingsNav.tsx'));
+if (!/SidebarItem/.test(navTsx) || /data-nav-item=/.test(navTsx)) fail.push('SettingsNav.tsx: rows must be the shared SidebarItem, not local markup');
+else ok('settings rows are the shared SidebarItem');
+
+const eslintConfig = read(join(frontend, 'eslint.config.mjs'));
+if (!/'local\/settings-primitives-only':\s*'error'/.test(eslintConfig)) fail.push('eslint.config.mjs: local/settings-primitives-only is not enforced');
+else ok('local/settings-primitives-only is enforced');
+
+/* Every settings pane the shell offers must be backed by a field the server actually
+ * declares. Panes whose data is client-side or spread over several fields are declared once;
+ * a new registry entry in neither list fails until someone decides. */
 const serverDir = join(repo, 'app', 'hoja_server');
 const serverText = readdirSync(serverDir)
   .filter((f) => f.endsWith('.graphql') || f.endsWith('.py'))
@@ -190,68 +174,19 @@ const PANE_CONTRACTS = {
   'billing': /^\s*usageSummary\s*[(:]/m,
   'cycles': /^\s*cycles\s*[(:]/m,
   'extensions': /^\s*extensions\s*[(:]/m,
+  'knowledge': /^\s*knowledgeDocs\s*[(:]/m,
 };
-const unbacked = new Set(entries.map((e) => e[1]));
-const paneProblems = [];
-for (const [id, signature] of Object.entries(PANE_CONTRACTS)) {
-  const backed = signature.test(serverText);
-  if (unbacked.has(id) && backed) {
-    paneProblems.push(`'${id}' is marked unavailable, but the server declares its field`);
-  }
-  if (!unbacked.has(id) && !backed) {
-    paneProblems.push(`'${id}' is offered in the nav, but no server field backs it`);
-  }
-}
-if (paneProblems.length) fail.push('main.tsx: pane availability disagrees with the server schema: ' + paneProblems.join('; '));
-else ok(`all ${Object.keys(PANE_CONTRACTS).length} settings panes agree with the server schema (offered ⇔ backed)`);
-
-/* The contract map has to cover the nav, not just the panes someone remembered
- * to add to it. A pane added to the sidebar and left out of PANE_CONTRACTS was
- * checked in neither direction — so "offered ⇔ backed" was true only of the
- * panes that had been listed, which is the failure mode this check exists to
- * prevent. Ids whose screen is purely client-side are declared once here; a
- * new nav entry that is in neither list fails until someone decides. */
-const navLiteral = (tsx.match(/const groups[^=]*=\[([\s\S]*?)\n \];/) || [])[1] || '';
-const navIds = [...new Set([...navLiteral.matchAll(/\['([a-z0-9-]+)'/g)].map((m) => m[1]))];
 const CLIENT_ONLY_PANES = new Set([
   'preferences', 'profile', 'notifications', 'api-keys', 'agent-conversations',
-  'connections', 'workspace', 'teams', 'members', 'account', 'issue-labels',
+  'connections', 'workspace', 'teams', 'members', 'issue-labels', 'initiatives',
 ]);
-const undeclaredPanes = navIds.filter((id) => !CLIENT_ONLY_PANES.has(id) && !(id in PANE_CONTRACTS));
-if (!navIds.length) fail.push('main.tsx: the settings nav groups could not be read, so pane coverage cannot be checked');
-else if (undeclaredPanes.length) {
-  fail.push(`main.tsx: nav panes with no declared server contract: ${undeclaredPanes.join(', ')}; ` +
-    'add each to PANE_CONTRACTS or to CLIENT_ONLY_PANES so it is checked in both directions');
-} else {
-  ok(`every one of the ${navIds.length} nav panes is declared, so each is checked offered ⇔ backed`);
-}
+const unbackedPanes = Object.entries(PANE_CONTRACTS).filter(([, sig]) => !sig.test(serverText)).map(([id]) => id);
+if (unbackedPanes.length) fail.push(`registry offers panes no server field backs: ${unbackedPanes.join(', ')}`);
+else ok(`all ${Object.keys(PANE_CONTRACTS).length} contracted panes are backed by a server field`);
+const undeclared = navIds.filter((id) => !CLIENT_ONLY_PANES.has(id) && !(id in PANE_CONTRACTS));
+if (undeclared.length) fail.push(`registry sections with no declared server contract: ${undeclared.join(', ')}; add each to PANE_CONTRACTS or CLIENT_ONLY_PANES`);
+else ok(`every one of the ${navIds.length} registry sections is declared`);
 
-/* A contract with no screen behind it is the other half of the same lie: the
- * gate would pass a field nothing renders. Routes are the authority here. */
-const routeIds = new Set([...tsx.matchAll(/section==='([a-z0-9-]+)'\)return/g)].map((m) => m[1]));
-const unrenderedPanes = Object.keys(PANE_CONTRACTS).filter((id) => !routeIds.has(id));
-if (unrenderedPanes.length) {
-  fail.push(`main.tsx: PANE_CONTRACTS names panes with no WorkspaceSettings route: ${unrenderedPanes.join(', ')}`);
-} else {
-  ok(`all ${Object.keys(PANE_CONTRACTS).length} contracted panes have a WorkspaceSettings route`);
-}
-
-/* Measured, not asserted away: 489/490 landed screens that are reachable by URL
- * but are not offered in the sidebar. Reported on every run so the gap cannot
- * be forgotten; not a failure, because a URL-reachable pane is still a real
- * pane, and the fix for it is a nav decision, not a schema one. */
-const routeOnly = [...routeIds].filter((id) => !navIds.includes(id));
-ok(`route-only panes (no sidebar entry): ${routeOnly.length ? routeOnly.join(', ') : 'none'}`);
-
-/* The drawer width must be chosen by a media query at the measured boundary, not by a base rule. */
-const drawerRule = /@media[^{]*max-width:\s*880px[^{]*\{[\s\S]{0,400}?\.settings-sidebar\s*\{[^}]*var\(--ds-settings-nav-drawer-width\)/;
-if (!drawerRule.test(settingsCss)) {
-  fail.push('settings.css: nothing switches the nav to the 330px drawer at max-width:880px, the measured boundary');
-} else {
-  ok('the drawer width is chosen at the measured 881px boundary');
-}
-
-/* --------------------------------------------------------------- 4. geometry ---- */
 const report = () => {
   if (fail.length) {
     console.error('settings gate FAILED:');
@@ -260,116 +195,5 @@ const report = () => {
   }
 };
 report();
-if (noBrowser) { console.log('browser geometry skipped (--no-browser)'); process.exit(0); }
-
-const cdp = join(repo, 'scripts/ui-probes/cdp-tab.mjs');
-const outDir = join(repo, 'artifacts', 'tmp-settings');
-mkdirSync(outDir, { recursive: true });
-
-const FIXTURE = `<!doctype html><html><head><meta charset="utf-8"><style>
-body{margin:0;background:var(--bg);font-family:Inter,system-ui,sans-serif}
-${tokensCss}
-${designCss}
-${mobileCss}
-${stylesCss}
-${graphCss}
-${settingsCss}
-</style></head><body>
-<div class="app"><div class="app-body">
-<aside class="sidebar settings-sidebar" data-settings-nav aria-label="Settings navigation">
-  <div class="settings-sidebar-top"><button type="button" class="settings-back">Back to app</button></div>
-  <div class="settings-workspace-name"><span class="settings-workspace-mark">H</span><span><b>Hoja</b><small>Workspace settings</small></span></div>
-  <label class="settings-search"><input aria-label="Search settings" placeholder="Find a setting…"></label>
-  <nav id="settings-navigation" aria-label="Settings sections">
-    <div class="nav-group"><p>Personal</p>
-      <button type="button" class="nav-item active" data-nav-id="preferences" aria-current="page"><span>Preferences</span></button>
-      <button type="button" class="nav-item" data-nav-id="profile"><span>Profile</span></button>
-    </div>
-    <div class="nav-group"><p>Not yet available</p>
-      <button type="button" class="nav-item" data-nav-id="billing" data-availability="unavailable"><span>Billing</span><span class="settings-nav-state">Not&nbsp;yet</span></button>
-    </div>
-  </nav>
-</aside>
-<div class="workspace-content"><main class="main"><section class="settings-page" data-settings-pane="preferences">
-  <header class="settings-page-heading"><span class="eyebrow">Hoja · Settings</span><h1>Preferences</h1><p>Appearance preferences follow you across devices.</p></header>
-  <div class="settings-group"><h2>Appearance</h2>
-    <div class="setting-row"><div><b>Theme</b><p>Choose the appearance used in this browser.</p></div><div class="setting-control"><button type="button">Light</button></div></div>
-    <div class="setting-row"><div><b>Font size</b><p>Adjust interface text size.</p></div><div class="setting-control"><button type="button">Default</button></div></div>
-  </div>
-</section>
-<section class="settings-page" data-settings-pane="billing">
-  <header class="settings-page-heading"><span class="eyebrow">Administration</span><h1>Billing</h1><p>What agents spent, at the issue list's proportions.</p></header>
-  <div class="settings-group">
-    <div class="lin-list" aria-label="Usage by agent">
-      <section class="lin-group">
-        <header class="lin-group-head"><b>1 agent</b><span class="count">12 credits</span><span class="grow"></span><span class="count">15 min</span></header>
-        <div class="lin-row" data-usage-row="scout">
-          <span class="title">Scout</span>
-          <span class="meta"><span class="lin-chip">12 / 55 credits</span><span class="lin-chip">15 min</span><span class="date">$0.140000</span><span class="date">1 run</span></span>
-        </div>
-      </section>
-    </div>
-  </div>
-</section></main></div>
-</div></div></body></html>`;
-const fixtureFile = join(outDir, 'settings.html');
-writeFileSync(fixtureFile, FIXTURE);
-
-const EXPR = `
-const rect = (sel) => { const el = document.querySelector(sel); if (!el) return null; const b = el.getBoundingClientRect(); return {x:+b.x.toFixed(2),y:+b.y.toFixed(2),w:+b.width.toFixed(2),h:+b.height.toFixed(2)}; };
-const cs = (sel, prop) => { const el = document.querySelector(sel); return el ? getComputedStyle(el).getPropertyValue(prop).trim() : null; };
-const token = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-return {
-  nav: rect('[data-settings-nav]'),
-  navRow: rect('[data-nav-id="profile"]'),
-  back: rect('.settings-back'),
-  title: rect('.settings-page-heading h1'),
-  titleSize: cs('.settings-page-heading h1','font-size'),
-  section: cs('.settings-page .settings-group h2','font-size'),
-  column: rect('.settings-page'),
-  row: rect('.setting-row'),
-  unavailable: rect('[data-availability="unavailable"]'),
-  usageRow: rect('[data-usage-row]'),
-  usageHead: rect('.lin-group-head'),
-  tokens: {nav:token('--ds-settings-nav-width'), drawer:token('--ds-settings-nav-drawer-width'), row:token('--ds-settings-nav-row-height'), back:token('--ds-settings-back-height'), column:token('--ds-settings-column-width'), title:token('--ds-settings-title-size'), section:token('--ds-settings-section-size'), rowH:token('--ds-settings-row-height')},
-  scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth,
-  overflow: document.documentElement.scrollWidth > window.innerWidth,
-};`;
-
-const px = (s) => parseFloat(s);
-for (const vp of ['390x844', '1024x768', '1440x900']) {
-  const width = Number(vp.split('x')[0]);
-  let raw;
-  try {
-    raw = JSON.parse(execFileSync(process.execPath, [cdp, '--url', 'file://' + fixtureFile, '--wait', '.settings-page', '--settle', '400', '--viewport', vp, '--expr', EXPR], { encoding: 'utf8' }));
-  } catch (e) { fail.push(`geometry ${vp}: probe failed (${e.message.trim()})`); continue; }
-  if (raw.error) { fail.push(`geometry ${vp}: ${raw.error}`); continue; }
-  const v = raw.value;
-  if (!v) { fail.push(`geometry ${vp}: no value returned`); continue; }
-  if (v.overflow) fail.push(`geometry ${vp}: horizontal overflow (${v.scrollWidth} > ${v.innerWidth})`);
-  // Below the 881px drawer boundary the nav is a 330px panel; above it, a 244px column.
-  const wantNav = width >= 881 ? px(v.tokens.nav) : px(v.tokens.drawer);
-  if (v.nav?.w !== wantNav) fail.push(`geometry ${vp}: nav width ${v.nav?.w} != ${wantNav}`);
-  // mobile-touch.css pins touch targets to 44px below 700px; above, the measured 28px row.
-  const wantRow = width < 700 ? 44 : px(v.tokens.row);
-  if (v.navRow?.h !== wantRow) fail.push(`geometry ${vp}: nav row height ${v.navRow?.h} != ${wantRow}`);
-  if (v.titleSize !== v.tokens.title) fail.push(`geometry ${vp}: page title ${v.titleSize} != ${v.tokens.title}`);
-  if (v.section !== v.tokens.section) fail.push(`geometry ${vp}: section heading ${v.section} != ${v.tokens.section}`);
-  if (v.row && v.row.h < px(v.tokens.rowH)) fail.push(`geometry ${vp}: settings row ${v.row.h} < measured ${v.tokens.rowH}`);
-  const wantColumn = Math.min(px(v.tokens.column), v.innerWidth);
-  if (!(v.column.w <= wantColumn + 0.5)) fail.push(`geometry ${vp}: content column ${v.column.w} exceeds the measured cap ${v.tokens.column}`);
-  if (vp === '1440x900' && v.column.w !== px(v.tokens.column)) fail.push(`geometry 1440: content column ${v.column.w} != ${v.tokens.column}`);
-  if (!v.unavailable) fail.push(`geometry ${vp}: the unavailable nav entry did not render`);
-  // WP14's usage pane is the issue list's own markup, so it must keep the issue list's
-  // rhythm rather than a proportion of its own: 42 px rows and a 36 px group header.
-  if (!v.usageRow) fail.push(`geometry ${vp}: the usage row did not render`);
-  else if (v.usageRow.h < 42) fail.push(`geometry ${vp}: usage row ${v.usageRow.h} < the issue list's 42px`);
-  if (!v.usageHead) fail.push(`geometry ${vp}: the usage group header did not render`);
-  else if (v.usageHead.h < 36) fail.push(`geometry ${vp}: usage group header ${v.usageHead.h} < 36px`);
-  writeFileSync(join(outDir, `settings-${vp}.json`), JSON.stringify({ viewport: vp, value: v, capturedAt: new Date().toISOString() }, null, 2) + '\n');
-}
-report();
-if (!fail.some((f) => f.startsWith('geometry'))) {
-  ok('geometry: nav 244/330 by breakpoint, row 28 (44 touch), title 24px, section 15px, column cap 640, usage rows on the issue list rhythm, zero overflow');
-}
-console.log('settings gate ok');
+if (noBrowser) { console.log('settings gate ok (source only)'); process.exit(0); }
+console.log('settings gate ok — run scripts/settings-e2e/run-all.cjs against a live app for geometry, a11y and journeys');

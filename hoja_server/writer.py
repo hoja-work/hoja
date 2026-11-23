@@ -205,6 +205,22 @@ def _validate_issue_references(
     return parent_id
 
 
+#: A workspace URL key: 1-48 lowercase ASCII letters or digits in hyphen-separated groups
+#: (no leading, trailing or doubled hyphen). Shared by workspaceCreate and workspaceUpdate so a
+#: key that one accepts the other never refuses; the settings UI mirrors this rule (HOJA-734).
+WORKSPACE_URL_KEY_MAX = 48
+_WORKSPACE_URL_KEY = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+
+def normalize_workspace_url_key(raw) -> str:
+    """The stored form of a workspace URL key, or BAD_USER_INPUT naming the rule it breaks."""
+    key = raw.strip().lower() if isinstance(raw, str) else ""
+    if not key or len(key) > WORKSPACE_URL_KEY_MAX or not _WORKSPACE_URL_KEY.fullmatch(key):
+        raise GraphQLError("Workspace key must contain letters, numbers, and hyphens",
+                           extensions={"code": "BAD_USER_INPUT", "field": "urlKey"})
+    return key
+
+
 class Writer:
     def __init__(self, engine: Engine) -> None:
         self.engine = engine
@@ -217,9 +233,7 @@ class Writer:
         raw_key = inp.get("urlKey")
         if not isinstance(name, str) or not name.strip():
             raise GraphQLError("Workspace name is required", extensions={"code": "BAD_USER_INPUT", "field": "name"})
-        key = raw_key.strip().lower() if isinstance(raw_key, str) else ""
-        if not key or len(key) > 48 or not key.replace("-", "").isalnum() or key.startswith("-") or key.endswith("-") or "--" in key:
-            raise GraphQLError("Workspace key must contain letters, numbers, and hyphens", extensions={"code": "BAD_USER_INPUT", "field": "urlKey"})
+        key = normalize_workspace_url_key(raw_key)
         ts, org_id, profile_id = now_iso(), new_id(), new_id()
         with self.engine.begin() as conn:
             actor = conn.execute(select(user).where(and_(

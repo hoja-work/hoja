@@ -159,6 +159,25 @@ def test_a_grant_allows_the_member_and_revocation_refuses_the_next_call(tmp_path
         assert _refused(_gql(client, key, TEAM_CREATE, {"i": {"name": "Again", "key": "AGA"}}))
 
 
+VIEWER_CAPS = "{ viewerCapabilities }"
+
+
+def test_viewer_capabilities_follow_grants_so_the_ui_can_gate_on_them(tmp_path) -> None:
+    """HOJA-734: the settings UI gates on what the API will allow, not on `admin`."""
+    engine, app, admin = _setup(tmp_path)
+    store = Store(engine)
+    with TestClient(app) as client:
+        owner = _gql(client, admin["token"], VIEWER_CAPS)
+        assert owner["data"]["viewerCapabilities"] == sorted([
+            "extension.manage", "label.manage", "member.invite", "task.delete", "team.create"])
+        _member_id, key = _member(store, client, admin)
+        assert _gql(client, key, VIEWER_CAPS)["data"]["viewerCapabilities"] == []
+        _gql(client, admin["token"], GRANT, {"c": "label.manage", "a": True})
+        assert _gql(client, key, VIEWER_CAPS)["data"]["viewerCapabilities"] == ["label.manage"]
+        _gql(client, admin["token"], GRANT, {"c": "label.manage", "a": False})
+        assert _gql(client, key, VIEWER_CAPS)["data"]["viewerCapabilities"] == []
+
+
 def test_label_mutations_refuse_a_member_with_one_shape(tmp_path) -> None:
     engine, app, admin = _setup(tmp_path)
     store = Store(engine)

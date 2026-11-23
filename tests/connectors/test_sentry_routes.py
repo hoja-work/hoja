@@ -298,7 +298,7 @@ def test_full_broker_flow_stores_a_sealed_installation_grant(tmp_path, broker) -
                 follow_redirects=False,
             )
     assert res.status_code == 302
-    assert res.headers["location"] == f"{TENANT}/?connector=sentry-connected"
+    assert res.headers["location"] == f"{TENANT}/workspace/settings/connections?connector=sentry-connected"
     sent = json.loads(exchange.calls.last.request.content)
     assert sent["grant_type"] == "authorization_code"
     assert sent["code"] == "c1"
@@ -390,7 +390,7 @@ def test_without_a_broker_the_callback_is_the_install_itself(tmp_path) -> None:
                 follow_redirects=False,
             )
     assert done.status_code == 302
-    assert done.headers["location"] == "/?connector=sentry-connected"
+    assert done.headers["location"] == "/workspace/settings/connections?connector=sentry-connected"
     assert len(_rows(engine, admin["org_id"])) == 1
 
 

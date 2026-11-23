@@ -1506,12 +1506,45 @@ def m_team_delete(_, info, id, deleteIssues=False):
 
 @mutation.field("workspaceUpdate")
 def m_workspace_update(_, info, input):
+    """Rename the workspace or change its URL key (admins only).
+
+    Refusals are typed errors, not ``success: false``: FORBIDDEN for a non-admin and
+    BAD_USER_INPUT (with ``field``) for an empty name, a malformed key or a key another
+    workspace already uses — the same key rules as workspaceCreate (HOJA-734).
+    """
+    from sqlalchemy import func as sa_func, select as sa_select
+    from sqlalchemy.exc import IntegrityError
+    from hoja_server.db import organization as organization_table
+    from hoja_server.writer import normalize_workspace_url_key
+
     store, _w, org, uid = _ctx(info)
     actor = store.get_user(org, uid)
     if not actor or not actor.get("admin"):
-        return {"success": False, "organization": None}
-    updated = store.update_workspace(org, input)
-    return {"success": bool(updated), "organization": updated}
+        raise GraphQLError("Only workspace admins can change workspace settings.",
+                           extensions={"code": "FORBIDDEN"})
+    values = dict(input or {})
+    if values.get("name") is not None:
+        if not str(values["name"]).strip():
+            raise GraphQLError("Workspace name is required",
+                               extensions={"code": "BAD_USER_INPUT", "field": "name"})
+    if values.get("urlKey") is not None:
+        key = normalize_workspace_url_key(values["urlKey"])
+        with store.engine.connect() as conn:
+            taken = conn.execute(sa_select(organization_table.c.id).where(
+                sa_func.lower(organization_table.c.url_key) == key,
+                organization_table.c.id != org)).first()
+        if taken:
+            raise GraphQLError("Workspace key already exists",
+                               extensions={"code": "BAD_USER_INPUT", "field": "urlKey"})
+        values["urlKey"] = key
+    try:
+        updated = store.update_workspace(org, values)
+    except IntegrityError:  # a concurrent update took the key between the check and the write
+        raise GraphQLError("Workspace key already exists",
+                           extensions={"code": "BAD_USER_INPUT", "field": "urlKey"}) from None
+    if not updated:
+        raise GraphQLError("Workspace not found", extensions={"code": "NOT_FOUND"})
+    return {"success": True, "organization": updated}
 
 
 @mutation.field("apiKeyCreate")

@@ -59,12 +59,10 @@ const STRUCTURAL_VALUE = [
   /^(?:GET|POST|PUT|PATCH|DELETE)$/,
 ];
 // Third-party product nouns: these "issues" belong to the provider, not to Hoja.
-const ALLOWED_FILES = new Set(['ConnectorsSettings.tsx']);
+const ALLOWED_FILES = new Set(['settings/sections/connections/providers.ts']);
 // Wire vocabulary: extension manifests name the `Issue` entity and the `issues`
 // event because that is the JSON an extension receives. Renaming it is an API break.
-const ALLOWED_LINES = new Map([
-  ['ExtensionsSettings.tsx:16', 'extension manifest wire vocabulary'],
-]);
+const ALLOWED_LINES = new Map([]);
 
 function walk(dir, out = []) {
   if (!statSync(dir).isDirectory()) {
