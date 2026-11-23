@@ -8,12 +8,21 @@
  * reads the same token and endpoint.
  */
 
-export type DecisionOption = {key: string; label: string; description?: string};
+export type DecisionMediaType = 'image' | 'video' | 'link';
+
+export type DecisionOption = {
+  key: string;
+  label: string;
+  description?: string;
+  mediaUrl?: string | null;
+  mediaType?: DecisionMediaType | string | null;
+};
 
 export type IssueDecision = {
   id: string;
   question: string;
   options: DecisionOption[];
+  typedOptions?: DecisionOption[];
   context?: string | null;
   status: 'open' | 'answered' | 'canceled';
   answered: boolean;
@@ -29,7 +38,7 @@ export type IssueDecision = {
 export type DecisionAnswer = {option?: string; answer?: string};
 
 export const decisionFields =
-  'id question options context status answered askedByAgent askedBy{id name} answer chosenOption answeredBy{id name} answeredAt createdAt';
+  'id question options typedOptions{key label description mediaUrl mediaType} context status answered askedByAgent askedBy{id name} answer chosenOption answeredBy{id name} answeredAt createdAt';
 
 async function request<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
   const stored = localStorage.getItem('hoja_token');

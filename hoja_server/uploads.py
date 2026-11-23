@@ -15,9 +15,13 @@ its row only survive together on one host.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import secrets
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 #: Bytes allowed per upload. Enforced before anything touches the disk.
@@ -176,18 +180,201 @@ def read_meta(blob_id: str) -> dict | None:
     return None
 
 
-def save_blob(org_id: str, original_name: str, content_type: str, body: bytes) -> tuple[str, str]:
-    """Write the bytes and their sidecar. Returns (url, filename)."""
+WEBP_COMPRESSIBLE_TYPES = frozenset({"image/png", "image/jpeg"})
+
+
+def _parse_iso_utc(raw: Any) -> datetime | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    text = raw.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def is_expired(meta: dict | None, *, now: datetime | None = None) -> bool:
+    """True when a blob's sidecar carries an ``expires_at`` timestamp in the past."""
+    if not isinstance(meta, dict):
+        return False
+    expires = _parse_iso_utc(meta.get("expires_at"))
+    if expires is None:
+        return False
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    return expires <= current
+
+
+def _maybe_compress_webp(
+    body: bytes, content_type: str, *, quality: int = 82
+) -> tuple[bytes, str, str] | None:
+    """Compress PNG/JPEG bytes to WebP when Pillow is available; fall back cleanly."""
+    if content_type not in WEBP_COMPRESSIBLE_TYPES:
+        return None
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(body)) as img:
+            if img.mode not in ("RGB", "RGBA"):
+                bands = img.getbands() if hasattr(img, "getbands") else ()
+                img = img.convert("RGBA" if "A" in bands else "RGB")
+            buf = io.BytesIO()
+            img.save(buf, format="WEBP", quality=quality)
+            webp_bytes = buf.getvalue()
+        if webp_bytes:
+            return webp_bytes, "image/webp", ".webp"
+    except Exception:
+        return None
+    return None
+
+
+def save_blob_with_meta(
+    org_id: str,
+    original_name: str,
+    content_type: str,
+    body: bytes,
+    *,
+    ttl_days: int | None = None,
+    compress_webp: bool = False,
+    webp_quality: int = 82,
+) -> dict[str, Any]:
+    """Write blob bytes + sidecar metadata and return full stored blob details."""
     original = (original_name or "file").split("/")[-1].split("\\")[-1]
+    safe_name = original[:120] or "file"
     extension = _clean_extension(original)
+    stored_body, stored_type, stored_ext = body, content_type, extension
+
+    if compress_webp:
+        compressed = _maybe_compress_webp(body, content_type, quality=webp_quality)
+        if compressed is not None:
+            stored_body, stored_type, stored_ext = compressed
+
+    now = datetime.now(timezone.utc)
+    created_at = now.isoformat()
+    expires_at: str | None = None
+    if ttl_days is not None:
+        if isinstance(ttl_days, bool) or not isinstance(ttl_days, int) or ttl_days < 0:
+            raise ValueError("ttl_days must be a non-negative integer.")
+        expires_at = (now + timedelta(days=ttl_days)).isoformat()
+
     blob_id = new_blob_id()
     directory = blobs_dir()
-    (directory / f"{blob_id}{extension}").write_bytes(body)
-    (directory / f"{blob_id}{SIDECAR_SUFFIX}").write_text(
-        json.dumps({"org": org_id, "filename": original[:120],
-                    "content_type": content_type, "size": len(body)})
+    (directory / f"{blob_id}{stored_ext}").write_bytes(stored_body)
+    meta: dict[str, Any] = {
+        "org": org_id,
+        "filename": safe_name,
+        "content_type": stored_type,
+        "size": len(stored_body),
+        "created_at": created_at,
+    }
+    if expires_at is not None:
+        meta["expires_at"] = expires_at
+    (directory / f"{blob_id}{SIDECAR_SUFFIX}").write_text(json.dumps(meta))
+    return {
+        "blob_id": blob_id,
+        "url": public_url(blob_id, stored_ext),
+        "filename": safe_name,
+        "content_type": stored_type,
+        "size": len(stored_body),
+        "created_at": created_at,
+        "expires_at": expires_at,
+    }
+
+
+def save_blob(
+    org_id: str,
+    original_name: str,
+    content_type: str,
+    body: bytes,
+    *,
+    ttl_days: int | None = None,
+    compress_webp: bool = False,
+    webp_quality: int = 82,
+) -> tuple[str, str]:
+    """Write the bytes and their sidecar. Returns (url, filename)."""
+    info = save_blob_with_meta(
+        org_id,
+        original_name,
+        content_type,
+        body,
+        ttl_days=ttl_days,
+        compress_webp=compress_webp,
+        webp_quality=webp_quality,
     )
-    return public_url(blob_id, extension), original[:120] or "file"
+    return info["url"], info["filename"]
+
+
+def _iter_sidecars() -> list[tuple[str, Path, dict[str, Any]]]:
+    """Collect (blob_id, sidecar_path, meta) across current and legacy upload dirs."""
+    found: list[tuple[str, Path, dict[str, Any]]] = []
+    seen: set[str] = set()
+    bdir = blobs_dir()
+    for path in bdir.glob(f"*{SIDECAR_SUFFIX}"):
+        blob_id = path.name[: -len(SIDECAR_SUFFIX)]
+        if not blob_id or blob_id in seen:
+            continue
+        try:
+            meta = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(meta, dict):
+            seen.add(blob_id)
+            found.append((blob_id, path, meta))
+    udir = uploads_dir()
+    for path in udir.glob("*.json"):
+        if path.name.endswith(SIDECAR_SUFFIX):
+            continue
+        blob_id = path.stem
+        if not blob_id or blob_id in seen:
+            continue
+        try:
+            meta = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(meta, dict):
+            seen.add(blob_id)
+            found.append((blob_id, path, meta))
+    return found
+
+
+def prune_expired_blobs(*, now: datetime | None = None) -> int:
+    """Delete expired blobs and their sidecars. Returns the count of pruned blobs."""
+    pruned = 0
+    bdir = blobs_dir()
+    udir = uploads_dir()
+    for blob_id, sidecar_path, meta in _iter_sidecars():
+        if not is_expired(meta, now=now):
+            continue
+        for candidate in list(bdir.glob(f"{blob_id}.*")) + list(udir.glob(f"{blob_id}.*")):
+            if candidate == sidecar_path:
+                continue
+            with contextlib.suppress(OSError):
+                candidate.unlink()
+        with contextlib.suppress(OSError):
+            sidecar_path.unlink()
+        pruned += 1
+    return pruned
+
+
+def org_upload_bytes(org_id: str) -> int:
+    """Total stored upload bytes currently on disk for an organization."""
+    total = 0
+    for blob_id, _sidecar_path, meta in _iter_sidecars():
+        if meta.get("org") != org_id:
+            continue
+        size = meta.get("size")
+        if isinstance(size, int) and size >= 0:
+            total += size
+        else:
+            stored = blob_for(blob_id)
+            if stored is not None:
+                with contextlib.suppress(OSError):
+                    total += stored.stat().st_size
+    return total
 
 
 def blob_for(blob_id: str) -> Path | None:

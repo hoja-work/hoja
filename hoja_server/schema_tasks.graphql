@@ -181,6 +181,7 @@ type TaskDecision {
   issue: Task!
   question: String!
   options: JSON!
+  typedOptions: [DecisionOption!]!
   context: String
   status: String!
   answered: Boolean!
@@ -236,6 +237,7 @@ extend type Mutation {
   taskDecisionAnswer(id: String!, input: TaskDecisionAnswerInput!): TaskDecisionAnswerPayload!
   taskDecisionCancel(id: String!): TaskDecisionPayload!
   taskDecisionCreate(input: TaskDecisionCreateInput!): TaskDecisionPayload!
+  taskReviewRequest(input: ReviewRequestInput!): ReviewRequestPayload!
   taskDelete(id: String!): DeletePayload
   taskLabelCreate(input: TaskLabelCreateInput!): TaskLabelPayload
   taskLabelDelete(id: String!): DeletePayload

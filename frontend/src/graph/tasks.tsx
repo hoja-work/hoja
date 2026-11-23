@@ -129,6 +129,10 @@ import {
   decisionFields,
   type IssueDecision,
 } from "../decisions";
+import {
+  ChosenDecisionMediaPreview,
+  VisualDecisionOptions,
+} from "../VisualDecisionOptions";
 import { getAgentsAdapter, type AgentChoice } from "../agents/adapter";
 
 /* Linear 1:1 Issues list + board + detail. */
@@ -1436,67 +1440,75 @@ function DecisionPanel({
               <Markdown text={d.context} density="block" />
             </div>
           )}
-          <div
-            className={styleClasses("flex flex-wrap gap-2 mt-2.5")}
-            data-style-hooks={styleHooks(
-              "lin-decision-actions flex flex-wrap gap-[8px] mt-[10px]",
-            )}
-          >
-            {d.options.length ? (
-              d.options.map((o) => (
-                <button
-                  type="button"
-                  key={o.key}
+          {d.options.some((o) => Boolean(o.mediaUrl)) ? (
+            <VisualDecisionOptions
+              options={d.options}
+              disabled={pending === d.id}
+              onPick={(key) => void run(d, { option: key })}
+            />
+          ) : (
+            <div
+              className={styleClasses("flex flex-wrap gap-2 mt-2.5")}
+              data-style-hooks={styleHooks(
+                "lin-decision-actions flex flex-wrap gap-[8px] mt-[10px]",
+              )}
+            >
+              {d.options.length ? (
+                d.options.map((o) => (
+                  <button
+                    type="button"
+                    key={o.key}
+                    className={styleClasses(
+                      "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333] in-data-[style-hooks~='lin-decisions']:flex in-data-[style-hooks~='lin-decisions']:flex-col in-data-[style-hooks~='lin-decisions']:items-start in-data-[style-hooks~='lin-decisions']:gap-0.5 in-data-[style-hooks~='lin-decisions']:text-left in-data-[style-hooks~='lin-decisions']:max-w-full in-data-[style-hooks~='lin-decisions']:bg-panel in-data-[style-hooks~='lin-decisions']:text-foreground in-data-[style-hooks~='lin-decisions']:border in-data-[style-hooks~='lin-decisions']:border-solid in-data-[style-hooks~='lin-decisions']:border-[color-mix(in_srgb,var(--warning,#f2c94c)_60%,var(--line))] in-data-[style-hooks~='lin-decisions']:shadow-none in-data-[style-hooks~='lin-decisions']:font-semibold [[data-style-hooks~='lin-decisions']_&:hover]:bg-[color-mix(in_srgb,var(--warning,#f2c94c)_18%,var(--panel))] [&_b]:font-[650] [&_small]:font-normal [&_small]:opacity-80",
+                    )}
+                    data-style-hooks={styleHooks(
+                      "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default primary data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333] lin-decision-option in-data-[style-hooks~='lin-decisions']:flex in-data-[style-hooks~='lin-decisions']:flex-col in-data-[style-hooks~='lin-decisions']:items-start in-data-[style-hooks~='lin-decisions']:gap-[2px] in-data-[style-hooks~='lin-decisions']:text-left in-data-[style-hooks~='lin-decisions']:max-w-full in-data-[style-hooks~='lin-decisions']:bg-panel in-data-[style-hooks~='lin-decisions']:text-foreground in-data-[style-hooks~='lin-decisions']:border in-data-[style-hooks~='lin-decisions']:border-solid in-data-[style-hooks~='lin-decisions']:border-[color-mix(in_srgb,var(--warning,#f2c94c)_60%,var(--line))] in-data-[style-hooks~='lin-decisions']:shadow-none in-data-[style-hooks~='lin-decisions']:font-semibold [[data-style-hooks~='lin-decisions']_&:hover]:bg-[color-mix(in_srgb,var(--warning,#f2c94c)_18%,var(--panel))] [&_b]:font-[650] [&_small]:font-normal [&_small]:opacity-80",
+                    )}
+                    disabled={pending === d.id}
+                    title={o.description || o.label}
+                    onClick={() => void run(d, { option: o.key })}
+                  >
+                    <b>{o.label}</b>
+                    {o.description && <small>{o.description}</small>}
+                  </button>
+                ))
+              ) : (
+                <form
                   className={styleClasses(
-                    "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333] in-data-[style-hooks~='lin-decisions']:flex in-data-[style-hooks~='lin-decisions']:flex-col in-data-[style-hooks~='lin-decisions']:items-start in-data-[style-hooks~='lin-decisions']:gap-0.5 in-data-[style-hooks~='lin-decisions']:text-left in-data-[style-hooks~='lin-decisions']:max-w-full in-data-[style-hooks~='lin-decisions']:bg-panel in-data-[style-hooks~='lin-decisions']:text-foreground in-data-[style-hooks~='lin-decisions']:border in-data-[style-hooks~='lin-decisions']:border-solid in-data-[style-hooks~='lin-decisions']:border-[color-mix(in_srgb,var(--warning,#f2c94c)_60%,var(--line))] in-data-[style-hooks~='lin-decisions']:shadow-none in-data-[style-hooks~='lin-decisions']:font-semibold [[data-style-hooks~='lin-decisions']_&:hover]:bg-[color-mix(in_srgb,var(--warning,#f2c94c)_18%,var(--panel))] [&_b]:font-[650] [&_small]:font-normal [&_small]:opacity-80",
+                    "flex gap-2 flex-[1_1_320px] min-w-0 [&_input]:flex-1 [&_input]:min-w-0 [&_input]:py-2 [&_input]:px-2.5 [&_input]:border [&_input]:border-solid [&_input]:border-line [&_input]:rounded-[7px] [&_input]:bg-bg [&_input]:text-foreground [&_input]:text-[13px]",
                   )}
                   data-style-hooks={styleHooks(
-                    "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default primary data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333] lin-decision-option in-data-[style-hooks~='lin-decisions']:flex in-data-[style-hooks~='lin-decisions']:flex-col in-data-[style-hooks~='lin-decisions']:items-start in-data-[style-hooks~='lin-decisions']:gap-[2px] in-data-[style-hooks~='lin-decisions']:text-left in-data-[style-hooks~='lin-decisions']:max-w-full in-data-[style-hooks~='lin-decisions']:bg-panel in-data-[style-hooks~='lin-decisions']:text-foreground in-data-[style-hooks~='lin-decisions']:border in-data-[style-hooks~='lin-decisions']:border-solid in-data-[style-hooks~='lin-decisions']:border-[color-mix(in_srgb,var(--warning,#f2c94c)_60%,var(--line))] in-data-[style-hooks~='lin-decisions']:shadow-none in-data-[style-hooks~='lin-decisions']:font-semibold [[data-style-hooks~='lin-decisions']_&:hover]:bg-[color-mix(in_srgb,var(--warning,#f2c94c)_18%,var(--panel))] [&_b]:font-[650] [&_small]:font-normal [&_small]:opacity-80",
+                    "lin-decision-free flex gap-[8px] flex-[1_1_320px] min-w-0 [&_input]:flex-1 [&_input]:min-w-0 [&_input]:py-[8px] [&_input]:px-[10px] [&_input]:border [&_input]:border-solid [&_input]:border-line [&_input]:rounded-[7px] [&_input]:bg-bg [&_input]:text-foreground [&_input]:text-[13px]",
                   )}
-                  disabled={pending === d.id}
-                  title={o.description || o.label}
-                  onClick={() => void run(d, { option: o.key })}
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const text = draft.trim();
+                    if (text) void run(d, { answer: text });
+                  }}
                 >
-                  <b>{o.label}</b>
-                  {o.description && <small>{o.description}</small>}
-                </button>
-              ))
-            ) : (
-              <form
-                className={styleClasses(
-                  "flex gap-2 flex-[1_1_320px] min-w-0 [&_input]:flex-1 [&_input]:min-w-0 [&_input]:py-2 [&_input]:px-2.5 [&_input]:border [&_input]:border-solid [&_input]:border-line [&_input]:rounded-[7px] [&_input]:bg-bg [&_input]:text-foreground [&_input]:text-[13px]",
-                )}
-                data-style-hooks={styleHooks(
-                  "lin-decision-free flex gap-[8px] flex-[1_1_320px] min-w-0 [&_input]:flex-1 [&_input]:min-w-0 [&_input]:py-[8px] [&_input]:px-[10px] [&_input]:border [&_input]:border-solid [&_input]:border-line [&_input]:rounded-[7px] [&_input]:bg-bg [&_input]:text-foreground [&_input]:text-[13px]",
-                )}
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const text = draft.trim();
-                  if (text) void run(d, { answer: text });
-                }}
-              >
-                <input
-                  aria-label={`Answer: ${d.question}`}
-                  placeholder="Type the answer…"
-                  value={draft}
-                  onChange={(e) => setDraft(e.target.value)}
-                  disabled={pending === d.id}
-                />
-                <button
-                  type="submit"
-                  className={styleClasses(
-                    "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
-                  )}
-                  data-style-hooks={styleHooks(
-                    "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default primary data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
-                  )}
-                  disabled={!draft.trim() || pending === d.id}
-                >
-                  Answer
-                </button>
-              </form>
-            )}
-          </div>
+                  <input
+                    aria-label={`Answer: ${d.question}`}
+                    placeholder="Type the answer…"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    disabled={pending === d.id}
+                  />
+                  <button
+                    type="submit"
+                    className={styleClasses(
+                      "inline-flex items-center gap-2 border border-solid border-line bg-panel text-foreground rounded-[7px] py-2 px-3.5 text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
+                    )}
+                    data-style-hooks={styleHooks(
+                      "lin-btn inline-flex items-center gap-[8px] border border-solid border-line bg-panel text-foreground rounded-[7px] py-[8px] px-[14px] text-[13px] font-[550] [&:hover]:bg-subtle disabled:opacity-50 disabled:cursor-default primary data-[style-hooks~='lin-btn']:bg-[#1b1b1f] data-[style-hooks~='lin-btn']:border-[#1b1b1f] data-[style-hooks~='lin-btn']:text-white [[data-style-hooks~='lin-btn']&:hover]:bg-[#333]",
+                    )}
+                    disabled={!draft.trim() || pending === d.id}
+                  >
+                    Answer
+                  </button>
+                </form>
+              )}
+            </div>
+          )}
           <small
             className={styleClasses("block mt-2 text-muted text-[12px]")}
             data-style-hooks={styleHooks(
@@ -1544,20 +1556,30 @@ function DecisionPanel({
             {settled.length === 1 ? "" : "s"}
           </button>
           {showSettled &&
-            settled.map((d) => (
-              <p
-                key={d.id}
-                className={styleClasses(
-                  "mt-1.5 mx-0 mb-0 text-[13px] text-muted wrap-anywhere [&_small]:text-muted",
-                )}
-                data-style-hooks={styleHooks(
-                  "lin-decision-answer mt-[6px] mx-0 mb-0 text-[13px] text-muted wrap-anywhere [&_small]:text-muted",
-                )}
-              >
-                <b>{d.question}</b> → {d.answer}{" "}
-                <small>· answered by {d.answeredBy?.name || "a member"}</small>
-              </p>
-            ))}
+            settled.map((d) => {
+              const chosenOpt = d.chosenOption
+                ? d.options.find((o) => o.key === d.chosenOption)
+                : undefined;
+              return (
+                <div
+                  key={d.id}
+                  className={styleClasses(
+                    "mt-1.5 mx-0 mb-0 text-[13px] text-muted wrap-anywhere [&_small]:text-muted",
+                  )}
+                  data-style-hooks={styleHooks(
+                    "lin-decision-answer mt-[6px] mx-0 mb-0 text-[13px] text-muted wrap-anywhere [&_small]:text-muted",
+                  )}
+                >
+                  <div>
+                    <b>{d.question}</b> → {d.answer}{" "}
+                    <small>
+                      · answered by {d.answeredBy?.name || "a member"}
+                    </small>
+                  </div>
+                  <ChosenDecisionMediaPreview option={chosenOpt} />
+                </div>
+              );
+            })}
         </div>
       )}
     </section>

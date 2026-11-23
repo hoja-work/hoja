@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import PurePosixPath
 from typing import Any
+from urllib.parse import urlparse
 
 STATUSES = ("open", "answered", "canceled")
 OPEN = "open"
@@ -21,13 +23,18 @@ ANSWERED = "answered"
 CANCELED = "canceled"
 
 MAX_QUESTION = 500
-MAX_OPTIONS = 10
+MAX_OPTIONS = 20
 MAX_LABEL = 120
 MAX_OPTION_DESCRIPTION = 280
+MAX_MEDIA_URL = 2048
 MAX_CONTEXT = 10_000
 MAX_ANSWER = 5_000
 MAX_AGENT = 200
 MAX_OPEN_PER_ISSUE = 20
+
+MEDIA_TYPES = ("image", "video", "link")
+_IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp", ".svg"})
+_VIDEO_EXTS = frozenset({".mp4", ".webm", ".mov", ".m4v", ".ogv"})
 
 _SLUG = re.compile(r"[^a-z0-9]+")
 
@@ -79,8 +86,62 @@ def _key_for(label: str, index: int) -> str:
     return f"{slug or 'option'}-{index + 1}"
 
 
+def validate_media_url(raw: Any, field: str) -> str | None:
+    """Validate an optional media URL: relative `/api/uploads/...` or `http(s)://...` only."""
+    url = _text(raw, field, limit=MAX_MEDIA_URL, required=False)
+    if url is None:
+        return None
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in url):
+        raise DecisionError(f"{field} contains invalid control characters.", field)
+    parsed = urlparse(url)
+    relative_upload = (
+        not parsed.scheme
+        and not parsed.netloc
+        and (parsed.path or "").startswith("/api/uploads/")
+        and ".." not in (parsed.path or "").split("/")
+    )
+    if relative_upload:
+        return url
+    scheme = (parsed.scheme or "").lower()
+    if scheme in ("http", "https") and parsed.netloc and not parsed.username and not parsed.password:
+        return url
+    raise DecisionError(
+        f"{field} must be a relative /api/uploads/... path or an http(s):// URL.",
+        field,
+    )
+
+
+def infer_media_type(url: str) -> str:
+    """Infer 'image', 'video', or 'link' from a media URL."""
+    parsed = urlparse(url)
+    ext = PurePosixPath(parsed.path or "").suffix.lower()
+    if ext in _IMAGE_EXTS:
+        return "image"
+    if ext in _VIDEO_EXTS:
+        return "video"
+    if not parsed.scheme and not parsed.netloc and (parsed.path or "").startswith("/api/uploads/"):
+        from hoja_server import uploads
+
+        ctype = uploads.content_type_for_url(url) or ""
+        if ctype.startswith("image/"):
+            return "image"
+        if ctype.startswith("video/"):
+            return "video"
+    return "link"
+
+
+def parse_media_type(raw: Any, field: str) -> str | None:
+    text = _text(raw, field, limit=32, required=False)
+    if text is None:
+        return None
+    lowered = text.lower()
+    if lowered not in MEDIA_TYPES:
+        raise DecisionError(f"{field} must be one of {list(MEDIA_TYPES)}.", field)
+    return lowered
+
+
 def parse_options(raw: Any) -> list[dict]:
-    """Normalize the option list to ``[{key, label, description}]``.
+    """Normalize the option list to ``[{key, label, description?, mediaUrl?, mediaType?}]``.
 
     A missing or empty list is legitimate: the answer is then free-form. Keys default to a
     slug of the label plus its position, so a caller may name only labels and still get
@@ -115,9 +176,18 @@ def parse_options(raw: Any) -> list[dict]:
         if key in seen:
             raise DecisionError(f"{path}.key '{key}' is used twice.", f"{path}.key")
         seen.add(key)
-        option = {"key": key, "label": label}
+        raw_media_url = item.get("mediaUrl") if "mediaUrl" in item else item.get("media_url")
+        raw_media_type = item.get("mediaType") if "mediaType" in item else item.get("media_type")
+        media_url = validate_media_url(raw_media_url, f"{path}.mediaUrl")
+        media_type = parse_media_type(raw_media_type, f"{path}.mediaType")
+        if media_type and not media_url:
+            raise DecisionError(f"{path}.mediaType requires mediaUrl.", f"{path}.mediaType")
+        option: dict[str, Any] = {"key": key, "label": label}
         if description:
             option["description"] = description
+        if media_url:
+            option["mediaUrl"] = media_url
+            option["mediaType"] = media_type or infer_media_type(media_url)
         options.append(option)
     return options
 

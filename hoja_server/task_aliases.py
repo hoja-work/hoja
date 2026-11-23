@@ -31,6 +31,7 @@ ROOT_ALIASES: dict[str, str] = {
     "taskDecisionCreate": "issueDecisionCreate",
     "taskDecisionAnswer": "issueDecisionAnswer",
     "taskDecisionCancel": "issueDecisionCancel",
+    "taskReviewRequest": "issueReviewRequest",
 }
 
 # aliased types that carry their own field resolvers (everything else is a plain

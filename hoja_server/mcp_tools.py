@@ -176,7 +176,7 @@ WRITE_TOOLS: dict[str, str] = {
     "cycleUnsubscribe": "Stop hearing about a cycle starting and completing.",
     "issueDecisionCreate": (
         "Ask a human a decision on an issue while you work (docs/decisions.md). Pass question, "
-        "optional options [{key,label,description}] and context; the issue is then flagged "
+        "optional options (up to 20) [{key,label,description,mediaUrl,mediaType}] and context; the issue is then flagged "
         "decisionNeeded and appears as 'waiting on me'. Use agent to name this session. "
         "Returns the decision id to poll with issueDecision."
     ),
@@ -187,6 +187,17 @@ WRITE_TOOLS: dict[str, str] = {
     ),
     "issueDecisionCancel": (
         "Withdraw an open decision you asked (the asker or an admin only); clears the issue's flag."
+    ),
+    "uploadMedia": (
+        "Upload a screenshot, image, video or document from base64 (dataBase64, filename, optional "
+        "contentType and ttlDays) and optionally attach it to a task via issueId. Returns the stored "
+        "/api/uploads/<id>.<ext> URL ready to embed in task comments or visual decision options (mediaUrl)."
+    ),
+    "issueReviewRequest": (
+        "Submit a review request on an issue in one call: upload or link visual artifacts, move the "
+        "issue to In Review (unless moveToInReview is false), post the summary comment, and optionally "
+        "open a visual decision with up to 20 options [{key,label,description,mediaUrl,mediaType}]."
+        " Deprecated: prefer the task* equivalent; this name stays as a wire-compatible alias."
     ),
 
     "taskCreate": (
@@ -211,7 +222,8 @@ WRITE_TOOLS: dict[str, str] = {
     "taskLabelDelete": "Delete a task label.",
     "taskDecisionCreate": (
         "Ask a human a decision on a task while you work (docs/decisions.md). Pass question, "
-        "optional options [{key,label,description}] and context. Returns the decision id to poll."
+        "optional options (up to 20) [{key,label,description,mediaUrl,mediaType}] and context. "
+        "Returns the decision id to poll."
     ),
     "taskDecisionAnswer": "Answer a decision by id (or option key). Idempotent.",
     "taskDecisionCancel": "Withdraw an open decision (asker or admin only).",
@@ -222,6 +234,11 @@ WRITE_TOOLS: dict[str, str] = {
     "knowledgeDocUpdate": (
         "Update a workspace, team, or project knowledge document by id "
         "(title, body, scope, scopeId, or enabled)."
+    ),
+    "taskReviewRequest": (
+        "Submit a review request on a task in one call: upload or link visual artifacts, move the "
+        "task to In Review (unless moveToInReview is false), post the summary comment, and optionally "
+        "open a visual decision with up to 20 options [{key,label,description,mediaUrl,mediaType}]."
     ),
 }
 

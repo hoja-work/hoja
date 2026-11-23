@@ -3616,8 +3616,29 @@ def create_app(
         body = await upload.read()
         if len(body) > uploads.MAX_BYTES:
             return JSONResponse({"error": "File too large (10 MB max)"}, status_code=413)
-        url, title = uploads.save_blob(org, original, resolved, body)
-        return JSONResponse({"url": url, "title": title, "contentType": resolved})
+        raw_ttl = form.get("ttlDays") or form.get("ttl_days") or request.query_params.get("ttlDays") or request.query_params.get("ttl_days")
+        ttl_days: int | None = None
+        if raw_ttl not in (None, ""):
+            try:
+                ttl_days = int(str(raw_ttl))
+            except ValueError:
+                return JSONResponse({"error": "ttlDays must be an integer"}, status_code=400)
+            if ttl_days < 1 or ttl_days > 365:
+                return JSONResponse({"error": "ttlDays must be between 1 and 365"}, status_code=400)
+        raw_compress = (
+            form.get("compressWebp")
+            or request.query_params.get("compressWebp")
+            or request.query_params.get("compress")
+            or ""
+        )
+        compress_webp = str(raw_compress).strip().lower() in ("1", "true", "yes", "webp")
+        info = uploads.save_blob_with_meta(
+            org, original, resolved, body, ttl_days=ttl_days, compress_webp=compress_webp
+        )
+        payload = {"url": info["url"], "title": info["filename"], "contentType": info["content_type"]}
+        if info["expires_at"] is not None:
+            payload["expiresAt"] = info["expires_at"]
+        return JSONResponse(payload)
 
     async def upload_serve(request: Request):
         uid, org, _identity_id, _browser_session = _auth(request)
@@ -3634,6 +3655,8 @@ def create_app(
         # file id is not authority to read a private team's material.
         if not store.upload_visible(org, uid, file_id):
             return JSONResponse({"error": "Not found"}, status_code=404)
+        if uploads.is_expired(meta):
+            return JSONResponse({"error": "Upload expired"}, status_code=410)
         stored = uploads.blob_for(file_id)
         if stored is None:
             return JSONResponse({"error": "Not found"}, status_code=404)

@@ -329,9 +329,11 @@ class Store:
     # ------------------------------------------------------------- decisions
     def ser_decision(self, row: dict) -> dict:
         """issue_decision row → IssueDecision; options decode here, never in callers."""
+        opts = decisiondocs.load_options(row.get("options"))
         return {
             "id": row["id"], "question": row["question"],
-            "options": decisiondocs.load_options(row.get("options")),
+            "options": opts,
+            "typedOptions": opts,
             "context": row.get("context"), "status": row.get("status"),
             "answered": row.get("status") == decisiondocs.ANSWERED,
             "answer": row.get("answer"), "chosenOption": row.get("chosen_option"),
@@ -2518,6 +2520,30 @@ class Store:
             if limit:
                 stmt = stmt.limit(limit)
             return [self.ser_attachment(r) for r in _conn_rows(conn, stmt)]
+
+    def create_attachment(
+        self,
+        org_id: str,
+        viewer_id: str,
+        inp: dict | str | None = None,
+        *,
+        issue_id: str | None = None,
+        url: str | None = None,
+        title: str | None = None,
+        subtitle: str | None = None,
+    ) -> dict | None:
+        from hoja_server.writer import Writer
+
+        if isinstance(inp, dict):
+            payload = dict(inp)
+        else:
+            payload = {
+                "issueId": issue_id or inp,
+                "url": url,
+                "title": title,
+                "subtitle": subtitle,
+            }
+        return Writer(self.engine).attachment_create(org_id, viewer_id, payload)
 
     def issue_github_links_for(self, org_id: str, issue_id: str,
                                limit: int | None = None) -> list[dict]:
