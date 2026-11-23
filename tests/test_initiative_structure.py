@@ -184,7 +184,8 @@ def test_migration_backfills_numbers_and_adds_tables(tmp_path):
             conn.execute(initiative.insert().values(
                 id=name, organization_id=seeded["org_id"], name=name, status="active", priority=0,
                 created_at=f"2026-01-0{n + 1}T00:00:00+00:00", updated_at="2026-01-01T00:00:00+00:00"))
-        conn.exec_driver_sql("DELETE FROM schema_revision WHERE revision = 88")
+        # Re-run 88 and every later revision (which must be idempotent too).
+        conn.exec_driver_sql("DELETE FROM schema_revision WHERE revision >= 88")
     migrate(engine)
     with engine.connect() as conn:
         numbers = dict(conn.execute(select(initiative.c.id, initiative.c.number)).all())

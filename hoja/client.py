@@ -10,9 +10,11 @@ Design goals:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-from typing import Any, AsyncIterator, TypeVar
+from collections.abc import AsyncIterator
+from typing import Any, Protocol, TypeVar
 
 import httpx
 from pydantic import BaseModel
@@ -38,31 +40,56 @@ DEFAULT_API_URL = "https://api.linear.app/graphql"
 T = TypeVar("T", bound=BaseModel)
 
 
+class TokenSource(Protocol):
+    """Supplies OAuth access tokens; blocking calls run in a worker thread."""
+
+    def access_token(self, *, force: bool = False, rejected: str | None = None) -> str: ...
+
+    def signed_out(self) -> AuthError: ...
+
+
 class GraphClient:
     """Async GraphQL client for a wire-compatible GraphQL API."""
 
     def __init__(
         self,
-        token: str,
+        token: str = "",
         *,
         base_url: str = DEFAULT_API_URL,
         timeout: float = 30.0,
         verbose: bool = False,
+        credential: TokenSource | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
+        """Create a client.
+
+        ``token`` is an API key sent as-is in ``Authorization``. ``credential``
+        is an OAuth token source (see ``hoja.credentials.OAuthSession``): its
+        access token is sent as ``Bearer``, refreshed before it expires and
+        once after a 401. Callers pass the OAuth account's own ``base_url``;
+        an OAuth credential is never combined with the default endpoint.
+        """
+        if credential is not None and base_url == DEFAULT_API_URL:
+            raise ValueError("an OAuth credential needs its workspace's base_url")
         self._token = token
+        self._credential = credential
+        self._last_access: str | None = None
         self._base_url = base_url
         self._verbose = verbose
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": f"hoja/{__version__} (+https://github.com/rinadelph/hoja)",
+        }
+        if credential is None:
+            headers["Authorization"] = token
         self._http = httpx.AsyncClient(
             http2=False,  # httpx[http2] is a separate dep — keep deps minimal
             timeout=timeout,
-            headers={
-                "Authorization": token,
-                "Content-Type": "application/json",
-                "User-Agent": f"hoja/{__version__} (+https://github.com/rinadelph/hoja)",
-            },
+            headers=headers,
+            transport=transport,
         )
 
-    async def __aenter__(self) -> "GraphClient":
+    async def __aenter__(self) -> GraphClient:
         return self
 
     async def __aexit__(self, *_: Any) -> None:
@@ -97,21 +124,15 @@ class GraphClient:
         if operation:
             payload["operationName"] = operation
 
-        if self._verbose:
-            logger.info(
-                "POST %s [token=%s] op=%s vars=%s",
-                self._base_url,
-                redact_token(self._token),
-                operation or "<anon>",
-                json.dumps(payload.get("variables", {}), default=str)[:200],
+        resp = await self._post(payload, operation)
+        if resp.status_code == 401 and self._credential is not None:
+            # The token may have been revoked or rotated elsewhere: refresh once.
+            await asyncio.to_thread(
+                self._credential.access_token, force=True, rejected=self._last_access
             )
-
-        try:
-            resp = await self._http.post(self._base_url, json=payload)
-        except httpx.TimeoutException as e:
-            raise NetworkError(f"Request timed out: {e}") from e
-        except httpx.RequestError as e:
-            raise NetworkError(f"Network error: {e}") from e
+            resp = await self._post(payload, operation)
+            if resp.status_code == 401:
+                raise self._credential.signed_out()
 
         # Handle HTTP-level errors
         if resp.status_code == 401:
@@ -149,6 +170,27 @@ class GraphClient:
         if data is None:
             raise APIError("the upstream API returned empty data")
         return data
+
+    async def _post(self, payload: dict[str, Any], operation: str | None) -> httpx.Response:
+        headers: dict[str, str] = {}
+        if self._credential is not None:
+            # Cheap when the cached token is fresh; refreshes within 60s of expiry.
+            self._last_access = await asyncio.to_thread(self._credential.access_token)
+            headers["Authorization"] = f"Bearer {self._last_access}"
+        if self._verbose:
+            logger.info(
+                "POST %s [token=%s] op=%s vars=%s",
+                self._base_url,
+                redact_token(self._last_access or self._token),
+                operation or "<anon>",
+                json.dumps(payload.get("variables", {}), default=str)[:200],
+            )
+        try:
+            return await self._http.post(self._base_url, json=payload, headers=headers)
+        except httpx.TimeoutException as e:
+            raise NetworkError(f"Request timed out: {e}") from e
+        except httpx.RequestError as e:
+            raise NetworkError(f"Network error: {e}") from e
 
     # ------------------------------------------------------------------
     # Typed helpers

@@ -18,14 +18,15 @@ from hoja.commands.comment import comment_app
 from hoja.commands.cycle import cycle_app
 from hoja.commands.decision import decision_app
 from hoja.commands.init import init_app
-from hoja.commands.task import task_app
 from hoja.commands.label import label_app
 from hoja.commands.memory import memory_app
 from hoja.commands.project import project_app
 from hoja.commands.raw import raw_app
+from hoja.commands.task import task_app
 from hoja.commands.team import team_app
 from hoja.commands.update import update_app
-from hoja.config import load_config, resolve_account, resolve_base_url, resolve_token
+from hoja.config import load_config, resolve_account
+from hoja.credentials import resolve_auth
 from hoja.errors import HojaError
 from hoja.models.enums import OutputFormat
 from hoja.output import emit_error
@@ -91,17 +92,24 @@ def main(
 
     # Account resolution: only required for commands that hit the API.
     # We defer the actual AuthError to first API call to allow `--help` etc.
+    resolved_token = ""
+    resolved_base_url = None
+    source = ""
+    session = None
+    auth_error: HojaError | None = None
+    account_name = ""
     try:
         team_hint = _team_key_hint_from_argv(sys.argv[1:])
         account_name, account_cfg = resolve_account(
             account, config, team_key=team_hint
         )
-        resolved_token = resolve_token(token, account_cfg)
-        resolved_base_url = resolve_base_url(None, account_cfg)
-    except HojaError:
-        account_name = ""
-        resolved_token = ""
-        resolved_base_url = None
+        resolved = resolve_auth(token, account_name, account_cfg)
+        resolved_token = resolved.token
+        resolved_base_url = resolved.base_url
+        source = resolved.source
+        session = resolved.session
+    except HojaError as e:
+        auth_error = e
 
     state = CLIState(
         token=resolved_token,
@@ -114,6 +122,9 @@ def main(
         timeout=timeout,
         account_name=account_name,
         base_url=resolved_base_url,
+        credential_source=source,
+        session=session,
+        auth_error=auth_error,
     )
     set_state(state)
 

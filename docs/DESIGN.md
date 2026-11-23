@@ -57,9 +57,11 @@ v1 covers the 8 highest-value domains. v2+ expands.
 ```
 hoja
 ├── auth                    # Token management
-│   ├── login               # Interactive: prompt for token, validate, store
-│   ├── status              # Show authenticated user
-│   ├── logout              # Clear stored token
+│   ├── login               # Browser (loopback + PKCE) or device-code sign-in
+│   ├── status              # Account, credential source, workspace, expiry, viewer
+│   ├── logout              # Revoke at the server, delete stored tokens
+│   ├── token               # Fresh access token (--json for plugins)
+│   ├── add                 # API-key account (automation)
 │   └── whoami              # Alias for `me`
 │
 ├── me                      # Viewer (current user) info
@@ -221,10 +223,14 @@ Location precedence:
 ```toml
 # ~/.config/hoja/config.toml
 
-[auth]
-token_env = "HOJA_TOKEN"  # Read from env, never store plaintext
-# Or for users who want it stored:
-# token = "hoja_..."
+[accounts.acme]             # written by `hoja auth login acme.example.com`
+base_url = "https://acme.example.com/graphql"
+# The sign-in itself (origin, MCP URL, workspace, where the tokens are kept) is in
+# signins.json next to this file, so older CLIs that reject unknown keys can still
+# read config.toml. Tokens live in the keyring or credentials.json, never here.
+
+[accounts.ci]               # API key for automation
+token_env = "HOJA_TOKEN"    # Read from env, never store plaintext
 
 [defaults]
 team = "ENG"                # Default team key
@@ -343,8 +349,15 @@ Error format (JSON mode):
 ## Security
 
 - **Token never logged.** Redacted in `--verbose` mode (shown as `hoja_…XXXX`).
-- **Token never stored in plaintext by default.** Read from env or via `--token`.
-- **HTTPS only.** No fallback to HTTP.
+- **Token never stored in plaintext by default.** API keys are read from env or
+  `--token`; `hoja auth login` tokens go to the OS keyring when the optional
+  `keyring` package is available, else to `credentials.json` (mode 0600, atomic
+  writes), never to `config.toml`. Refresh is serialised across processes with
+  a lock on `credentials.lock`.
+- **Signed-in tokens stay with their workspace.** An OAuth token is only sent to
+  the origin it was issued for, never to `$HOJA_API_URL` on another host or to
+  a built-in default endpoint.
+- **HTTPS only.** No fallback to HTTP (plain http only for loopback hosts).
 - **TLS verification mandatory.** No `--insecure` flag.
 - **Pinned dependencies.** `requirements.txt` includes hashes.
 - **No telemetry.** Zero outbound calls except to the configured GraphQL

@@ -231,4 +231,29 @@ def tenant_target(
     code = (parse_qs(parts.query).get("invite") or [""])[0]
     if code and re.fullmatch(r"[A-Za-z0-9_-]{16,128}", code):
         return f"https://{host}{path}?invite={code}"
+    # The other ones: an app's pending approval (the OAuth consent page, or the
+    # device page with its code). A person sent to sign in from there must land
+    # back on it, not on the workspace root.
+    if path in RETURN_PATHS:
+        name, pattern = RETURN_PATHS[path]
+        value = (parse_qs(parts.query).get(name) or [""])[0]
+        if re.fullmatch(pattern, value):
+            return f"https://{host}{path}?{name}={value}"
     return f"https://{host}{path}"
+
+
+#: Paths a sign-in may return to, with the one parameter each keeps and its shape.
+RETURN_PATHS = {
+    "/mcp/oauth/consent": ("pending", r"[A-Za-z0-9_-]{16,200}"),
+    "/device": ("user_code", r"[A-Z]{4}-[A-Z]{4}"),
+}
+
+
+def return_path(target: str) -> str | None:
+    """The path a handoff should land on, when the target names an approval page."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(target)
+    if parts.path in RETURN_PATHS and parts.query.startswith(RETURN_PATHS[parts.path][0] + "="):
+        return f"{parts.path}?{parts.query}"
+    return None

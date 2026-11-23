@@ -62,19 +62,52 @@ def _gql(client, host, token):
                        headers={"Host": host, "Authorization": f"Bearer {token}"})
 
 
+def _wrong_host(res, url):
+    """403, not 401 (the credential is valid), with a code and the credential's own URL."""
+    assert res.status_code == 403, res.text
+    body = res.json()
+    assert body["code"] == "wrong_workspace_host" and body["url"] == url
+    assert url in body["error"]
+    assert body["errors"][0]["extensions"] == {"code": "wrong_workspace_host", "url": url}
+    assert "www-authenticate" not in res.headers
+
+
 def test_a_pinned_host_accepts_only_its_own_workspace(shared):
-    _engine, client, a, b = shared
-    assert _gql(client, PINNED, "alpha-tok").status_code == 401
+    _engine, client, _a, b = shared
+    _wrong_host(_gql(client, PINNED, "alpha-tok"), f"https://{CANONICAL}/graphql")
     own = _gql(client, PINNED, "bravo-tok")
     assert own.status_code == 200
     assert own.json()["data"]["workspace"]["id"] == b["org_id"]
 
 
-def test_the_canonical_host_serves_every_workspace(shared):
-    _engine, client, a, b = shared
-    for token, org in (("alpha-tok", a["org_id"]), ("bravo-tok", b["org_id"])):
-        res = _gql(client, CANONICAL, token)
-        assert res.json()["data"]["workspace"]["id"] == org
+def test_the_canonical_host_serves_every_workspace_without_its_own_host(shared):
+    """Product rule: a workspace with its own host is used there only.
+
+    This test used to assert that Bravo's key also worked on the canonical host.
+    It no longer does: an enterprise workspace's credentials are refused on
+    app.hoja.work with wrong_workspace_host naming the workspace's own URL.
+    """
+    _engine, client, a, _b = shared
+    res = _gql(client, CANONICAL, "alpha-tok")
+    assert res.json()["data"]["workspace"]["id"] == a["org_id"]
+    _wrong_host(_gql(client, CANONICAL, "bravo-tok"), f"https://{PINNED}/graphql")
+
+
+def test_an_unknown_token_is_still_a_plain_401(shared):
+    _engine, client, _a, _b = shared
+    for host in (PINNED, CANONICAL):
+        res = _gql(client, host, "not-a-token")
+        assert res.status_code == 401
+        assert res.json()["errors"][0]["extensions"]["code"] == "AUTHENTICATION_ERROR"
+
+
+def test_a_misdirected_request_names_the_canonical_host(shared):
+    _engine, client, _a, _b = shared
+    res = client.post("/graphql", json={"query": "{ viewer { id } }"}, follow_redirects=False,
+                      headers={"Host": "alpha.hoja.work", "Authorization": "Bearer alpha-tok"})
+    assert res.status_code == 421
+    assert res.json()["reason"] == "not_a_workspace_host"
+    assert res.json()["canonicalHost"] == CANONICAL
 
 
 def test_other_workspace_hosts_redirect_to_the_canonical_host(shared):
@@ -113,9 +146,11 @@ def test_mcp_on_a_pinned_host_refuses_another_workspace_key(shared, monkeypatch)
     monkeypatch.setenv("HOJA_WEBHOOK_WORKER", "0")
     _engine, client, _a, _b = shared
     with client:
-        assert _mcp_init(client, PINNED, "alpha-tok").status_code == 401
+        _wrong_host(_mcp_init(client, PINNED, "alpha-tok"), f"https://{CANONICAL}/mcp")
         assert _mcp_init(client, PINNED, "bravo-tok").status_code == 200
         assert _mcp_init(client, CANONICAL, "alpha-tok").status_code == 200
+        # The enterprise workspace's key is refused on the canonical host, naming its own.
+        _wrong_host(_mcp_init(client, CANONICAL, "bravo-tok"), f"https://{PINNED}/mcp")
 
 
 def test_mcp_on_a_pinned_host_waits_for_startup(shared):
@@ -237,3 +272,18 @@ def test_reserved_slugs_match_the_provisioner_script() -> None:
     provisioner = ast.literal_eval("{" + block.group(1) + "}")
     assert set(provisioner) == set(RESERVED_SLUGS)
     assert "api" in provisioner
+
+
+def test_graphql_names_each_workspace_origin(shared):
+    """Clients discover <origin>/graphql and <origin>/mcp from the API instead of guessing."""
+    from hoja_server.db import app_url
+
+    _engine, client, a, b = shared
+    query = "{ workspace { id origin } myWorkspaces { organizationId origin } }"
+    own = client.post("/graphql", json={"query": query},
+                      headers={"Host": PINNED, "Authorization": "Bearer bravo-tok"}).json()["data"]
+    assert own["workspace"]["origin"] == f"https://{PINNED}"
+    assert own["myWorkspaces"] == [{"organizationId": b["org_id"], "origin": f"https://{PINNED}"}]
+    alpha = client.post("/graphql", json={"query": query},
+                        headers={"Host": CANONICAL, "Authorization": "Bearer alpha-tok"}).json()["data"]
+    assert alpha["workspace"] == {"id": a["org_id"], "origin": app_url()}

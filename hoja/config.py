@@ -8,7 +8,9 @@ Token resolution order (per account):
   1. --token CLI flag (passed in)
   2. $<ACCOUNT_TOKEN_ENV> environment variable (default: HOJA_TOKEN,
      with deprecated LINEAR_TOKEN still read as a fallback)
-  3. config.toml [accounts.<name>].token (discouraged)
+  3. OAuth credentials from `hoja auth login` (accounts with credential="oauth";
+     see hoja.credentials.resolve_auth)
+  4. config.toml [accounts.<name>].token (discouraged)
 
 Account resolution order:
   1. --account CLI flag
@@ -22,7 +24,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -60,8 +62,35 @@ def env_with_legacy(name: str) -> str | None:
     return None
 
 
+class WorkspaceInfo(BaseModel):
+    """Workspace an OAuth sign-in is bound to (non-secret, from the token response)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str | None = None
+    name: str | None = None
+    url_key: str | None = None
+    origin: str | None = None
+
+
+class UserInfo(BaseModel):
+    """Person an OAuth sign-in belongs to (non-secret, from the token response)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str | None = None
+    email: str | None = None
+    name: str | None = None
+
+
 class AccountConfig(BaseModel):
-    """A named Hoja account."""
+    """A named Hoja account.
+
+    An account authenticates with an API key (``token``/``token_env``) or, when
+    ``credential == "oauth"``, with tokens from ``hoja auth login``. OAuth
+    secrets never live in this file: they are kept in the OS keyring or in
+    ``credentials.json`` next to it (see ``hoja.credentials``).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -79,6 +108,17 @@ class AccountConfig(BaseModel):
     # account auto-selection: a command targeting team SWA (via --team SWA or
     # an identifier like SWA-20) picks the account that lists "SWA" here.
     teams: list[str] = Field(default_factory=list)
+    # How this account signs in: "oauth" for `hoja auth login`, otherwise an
+    # API key from token/token_env. Unset means an API-key account.
+    credential: Literal["api_key", "oauth"] | None = None
+    # Workspace origin (https://host[:port]) an OAuth account is bound to.
+    # OAuth tokens are only ever sent to this origin.
+    origin: str | None = None
+    mcp_url: str | None = None
+    # Where the OAuth secrets are stored: "keyring" or "file".
+    credential_store: Literal["keyring", "file"] | None = None
+    workspace: WorkspaceInfo | None = None
+    user: UserInfo | None = None
 
 
 class DefaultsConfig(BaseModel):
@@ -164,6 +204,7 @@ def load_config(path: Path | None = None) -> Config:
 
     # Migrate legacy [auth] section if present
     data = _migrate_legacy_auth(data)
+    _merge_signins(data, _read_signins(_signins_path(p)))
 
     try:
         return Config(**data)
@@ -184,10 +225,84 @@ def save_config(config: Config, path: Path | None = None) -> None:
     p = path or config_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     data = _config_to_dict(config)
+    signins = _split_signins(data)
     with open(p, "wb") as f:
         tomli_w.dump(data, f)
     with contextlib.suppress(OSError):
         os.chmod(p, 0o600)
+    _write_signins(_signins_path(p), signins)
+
+
+# Account fields added for `hoja auth login`. They are kept out of config.toml in
+# a sidecar file because every earlier CLI validates config.toml with
+# extra="forbid": one unknown key made an older `hoja` (another install, a pinned
+# version in CI, the published hoja-cli) refuse the whole file. With the sidecar,
+# an older CLI sees an ordinary account without a token and says so.
+SIGNIN_FIELDS = ("credential", "origin", "mcp_url", "credential_store", "workspace", "user")
+SIGNINS_FILE = "signins.json"
+
+
+def _signins_path(config_file: Path) -> Path:
+    return config_file.with_name(SIGNINS_FILE)
+
+
+def _read_signins(path: Path) -> dict[str, dict[str, Any]]:
+    import json
+
+    try:
+        raw = json.loads(path.read_text())
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        raise UsageError(
+            f"Invalid sign-in file: {e}",
+            hint=f"Delete {path} and run `hoja auth login` again",
+        ) from e
+    accounts = raw.get("accounts") if isinstance(raw, dict) else None
+    return {k: v for k, v in (accounts or {}).items() if isinstance(v, dict)}
+
+
+def _merge_signins(data: dict[str, Any], signins: dict[str, dict[str, Any]]) -> None:
+    """Fold sidecar fields into the accounts config.toml still defines."""
+    accounts = data.get("accounts")
+    if not isinstance(accounts, dict):
+        return
+    for name, fields in signins.items():
+        if isinstance(accounts.get(name), dict):
+            for key in SIGNIN_FIELDS:
+                if key in fields:
+                    accounts[name].setdefault(key, fields[key])
+
+
+def _split_signins(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Remove sign-in fields from the TOML payload; return them per account."""
+    signins: dict[str, dict[str, Any]] = {}
+    for name, account in (data.get("accounts") or {}).items():
+        moved = {key: account.pop(key) for key in SIGNIN_FIELDS if key in account}
+        if moved:
+            signins[name] = moved
+    return signins
+
+
+def _write_signins(path: Path, signins: dict[str, dict[str, Any]]) -> None:
+    import json
+    import tempfile
+
+    if not signins:
+        with contextlib.suppress(FileNotFoundError):
+            path.unlink()
+        return
+    fd, tmp = tempfile.mkstemp(prefix=".signins-", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump({"version": 1, "accounts": signins}, f, indent=2, sort_keys=True)
+        with contextlib.suppress(OSError):
+            os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def _config_to_dict(config: Config) -> dict[str, Any]:
@@ -332,8 +447,8 @@ def resolve_token(
     raise AuthError(
         "No Hoja API token found",
         hint=(
-            f"Set {hint_vars}, pass --token, or configure token in "
-            f"{config_path()}"
+            "Run `hoja auth login <workspace>` to sign in, or for automation set "
+            f"{hint_vars} or pass --token"
         ),
     )
 

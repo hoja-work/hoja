@@ -230,6 +230,16 @@ is selected automatically. You do NOT need to export a token per workspace.
 
 ### Set up accounts (one time)
 
+Sign in with the browser (preferred for people):
+
+```bash
+hoja auth login acme.example.com          # stores a refreshable token as account "acme"
+hoja auth login acme.example.com --device # no local browser: approve a code elsewhere
+hoja auth logout                          # revoke and delete the stored tokens
+```
+
+API keys remain the path for automation:
+
 ```bash
 hoja auth add work     --token hoja_xxx --teams "SWA,ENG" --default
 hoja auth add personal --token hoja_yyy --teams "PER"
@@ -253,9 +263,13 @@ hoja auth accounts          # see them, with [default]/[current]/teams markers
 1. `--token <T>` CLI flag
 2. `$<account.token_env>` environment variable (default `HOJA_TOKEN`; the
    deprecated `LINEAR_TOKEN` is used only when `HOJA_TOKEN` is unset)
-3. `token` stored in the account's config block (discouraged: plaintext)
+3. The account's `hoja auth login` sign-in (refreshed automatically; only sent
+   to that account's workspace)
+4. `token` stored in the account's config block (discouraged: plaintext)
 
-Verify what resolved with `hoja auth status` / `hoja auth accounts`.
+Verify what resolved with `hoja auth status` (it names the active credential
+source) / `hoja auth accounts`. If a command fails with "Signed out of
+<workspace>", ask the user to run the `hoja auth login <origin>` it prints.
 Tokens look like `hoja_<long-random-string>` — mint one from your
 workspace's members/API-key screen, or with `hoja-serve token`.
 

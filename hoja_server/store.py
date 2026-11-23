@@ -65,6 +65,7 @@ from hoja_server.db import (
     saved_view_favorite,
     team,
     team_member,
+    tenant_base_url,
     token_hash,
     user,
     user_preference,
@@ -1203,7 +1204,7 @@ class Store:
                 organization_membership.c.id,
                 organization_membership.c.organization_id.label("organizationId"),
                 organization.c.name, organization.c.url_key.label("urlKey"),
-                user.c.admin,
+                organization.c.vanity_host, user.c.admin,
             ).join(organization, organization.c.id == organization_membership.c.organization_id)
              .join(user, and_(user.c.id == organization_membership.c.profile_user_id,
                               user.c.organization_id == organization_membership.c.organization_id))
@@ -1213,6 +1214,7 @@ class Store:
              .order_by(organization.c.name)).mappings().all()
         return [{"id": r["id"], "organizationId": r["organizationId"],
                  "name": r["name"], "urlKey": r["urlKey"],
+                 "origin": tenant_base_url(r["vanity_host"]),
                  "role": "admin" if r["admin"] else "member"} for r in rows]
 
     def switch_membership(self, identity_id: str | None, organization_ref: str) -> dict | None:
@@ -1458,6 +1460,33 @@ class Store:
                 organization.c.id == invite[0])).mappings().first()
         return dict(org_row) if org_row else None
 
+    def pending_invitation(self, raw: str | None) -> dict | None:
+        """Who a still-valid code was sent to: ``{organization_id, email}``, unspent.
+
+        Sign-in needs this to tell "you used another Google account" apart from
+        "you were never invited". The caller must already hold the code, and
+        must not reveal more than a masked form of the address.
+        """
+        if not raw:
+            return None
+        now = datetime.now(timezone.utc).isoformat()
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                select(membership_invitation.c.organization_id, user.c.email).select_from(
+                    membership_invitation.join(
+                        user, user.c.id == membership_invitation.c.profile_user_id)
+                ).where(and_(
+                    membership_invitation.c.token_hash == token_hash(raw),
+                    membership_invitation.c.accepted_at.is_(None),
+                    membership_invitation.c.expires_at > now,
+                    user.c.organization_id == membership_invitation.c.organization_id,
+                    user.c.active.is_(True),
+                    user.c.archived_at.is_(None),
+                ))).first()
+        if row is None or not row[1]:
+            return None
+        return {"organization_id": row[0], "email": addresses.canonical(row[1])}
+
     def accept_membership_invitation_by_identity(self, identity_id: str | None,
                                                  raw: str) -> dict | None:
         """Accept an invitation for an already verified identity, with no password.
@@ -1686,20 +1715,24 @@ class Store:
                                 team_id=seat, user_id=uid, role="member"))
                 restored = conn.execute(select(user).where(user.c.id == uid)).mappings().first()
                 return dict(restored), raw_token
-            if conn.execute(select(global_identity.c.id).where(
-                global_identity.c.email == normalized_email)).first():
-                raise InviteRefused(
-                    "identity_exists",
-                    "That address already has an account on this workspace. Ask an admin to restore it instead.",
-                )
             conn.execute(user.insert().values(
                 id=uid, organization_id=org_id, name=clean_name, display_name=clean_name,
                 email=normalized_email, active=True, admin=bool(is_admin),
                 created_at=now, updated_at=now,
             ))
-            identity_id = new_id()
-            conn.execute(global_identity.insert().values(
-                id=identity_id, email=normalized_email, created_at=now))
+            # A global identity is the person (one verified address), not a seat in
+            # any workspace. Someone who already belongs to another workspace keeps
+            # that identity and gains a profile here: refusing them made a member of
+            # one workspace uninvitable to every other one, and the refusal told this
+            # workspace that the address existed elsewhere.
+            existing_identity = conn.execute(select(global_identity.c.id).where(
+                global_identity.c.email == normalized_email)).first()
+            if existing_identity is not None:
+                identity_id = existing_identity[0]
+            else:
+                identity_id = new_id()
+                conn.execute(global_identity.insert().values(
+                    id=identity_id, email=normalized_email, created_at=now))
             conn.execute(organization_membership.insert().values(
                 id=new_id(), identity_id=identity_id, organization_id=org_id,
                 profile_user_id=uid, active=True, created_at=now))

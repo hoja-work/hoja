@@ -618,6 +618,15 @@ def _error_text(op: str, errors: list[GraphQLError]) -> str:
     return text
 
 
+def tool_name(op: str) -> str:
+    return "hoja_" + op
+
+
+def write_tool_names() -> frozenset[str]:
+    """Names of the tools that need hoja:write, as ``tools/call`` sends them."""
+    return frozenset(tool_name(op) for op in WRITE_TOOLS)
+
+
 def build_tools(schema: GraphQLSchema, principal: Callable[[bool], dict]) -> list[Tool]:
     """principal(write) -> GraphQL context for the authenticated caller; raises ToolError."""
     # Tell the policy layer which tool names exist, so a policy cannot grant a
@@ -728,7 +737,7 @@ def _make_tool(schema: GraphQLSchema, spec: _Spec, principal: Callable[[bool], d
     )
     return Tool(
         fn=run,
-        name="hoja_" + spec.op,
+        name=tool_name(spec.op),
         description=spec.description + ("" if not spec.write else " Requires the hoja:write scope."),
         parameters=spec.parameters,
         fn_metadata=FuncMetadata(arg_model=_RawArgs),

@@ -39,6 +39,18 @@ type SessionInfo = {
     signInUrl: string | null;
     message: string;
   };
+  /** Workspaces this verified identity can already open (members and invitations). */
+  workspaces?: MemberWorkspace[];
+};
+
+/** One workspace the person belongs to, from GET /api/signup. */
+type MemberWorkspace = {
+  name: string;
+  host: string;
+  workspaceUrl: string;
+  signInUrl: string;
+  status: "active" | "invited";
+  role?: string | null;
 };
 
 type Alert = { title: string; message: string };
@@ -70,6 +82,9 @@ export function SignupPage() {
   const [alert, setAlert] = useState<Alert | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [request, setRequest] = useState<WorkspaceRequest | null>(null);
+  // An existing member sees their workspaces first; the create form is the
+  // secondary action, opened on purpose.
+  const [wantsCreate, setWantsCreate] = useState(false);
   const widgetRef = useRef<HTMLDivElement | null>(null);
   const widgetId = useRef<string | null>(null);
   const slugInput = useRef<HTMLInputElement | null>(null);
@@ -133,7 +148,13 @@ export function SignupPage() {
   const ready = Boolean(
     config && !closed && config.available && config.signInUrl,
   );
-  const showForm = ready && Boolean(session?.googleVerified) && !request;
+  const memberships = session?.googleVerified ? session.workspaces || [] : [];
+  const showMemberships = memberships.length > 0 && !request;
+  const showForm =
+    ready &&
+    Boolean(session?.googleVerified) &&
+    !request &&
+    (!showMemberships || wantsCreate);
 
   // 2. The widget. Explicit render into this component's node, one callback that
   //    stores the token; the effect removes it on unmount (or on success).
@@ -321,9 +342,13 @@ export function SignupPage() {
           : request.alreadyQueued
             ? "You already asked for this address"
             : "Request received"
-    : signedIn
-      ? "Name your workspace"
-      : "Sign up with your identity provider";
+    : showMemberships && !wantsCreate
+      ? memberships.length === 1
+        ? "You already have a workspace"
+        : "You already have workspaces"
+      : signedIn
+        ? "Name your workspace"
+        : "Sign up with your identity provider";
   const sub = request
     ? request.status === "active"
       ? "Opening it now. You will sign in there with the same Google account."
@@ -332,11 +357,15 @@ export function SignupPage() {
         : request.status === "provisioning"
           ? "The database, application and address are being prepared. This page updates itself."
           : "Your request is accepted. Creation starts automatically; this page updates itself."
-    : signedIn
-      ? "Signed in with Google. Your team will reach this workspace at " +
-        preview +
-        ".hoja.work."
-      : "You'll use this provider to sign in to your workspace.";
+    : showMemberships && !wantsCreate
+      ? "Signed in as " +
+        (session?.email || "your Google account") +
+        ". Open your workspace below."
+      : signedIn
+        ? "Signed in with Google. Your team will reach this workspace at " +
+          preview +
+          ".hoja.work."
+        : "You'll use this provider to sign in to your workspace.";
 
   return (
     <main
@@ -393,7 +422,48 @@ export function SignupPage() {
           </p>
         )}
 
-        {config && closed && (
+        {showMemberships && (
+          <section
+            className="w-full max-w-sm mx-auto mb-8 text-left"
+            data-fidelity-state="signin-memberships"
+            aria-label="Your workspaces"
+          >
+            <ul className="grid gap-2 m-0 p-0 list-none">
+              {memberships.map((entry) => (
+                <li key={entry.host}>
+                  <a
+                    className="flex items-center justify-between gap-4 p-4 border border-solid border-neutral-800 rounded-sm bg-neutral-800 text-white no-underline hover:bg-black"
+                    data-fidelity-state="signin-workspace-link"
+                    href={entry.signInUrl}
+                  >
+                    <span className="grid gap-1 min-w-0">
+                      <span className="font-semibold truncate">
+                        Open {entry.name}
+                      </span>
+                      <span className="text-sm text-neutral-300 truncate">
+                        {entry.host}
+                        {entry.status === "invited" ? " · invitation" : ""}
+                      </span>
+                    </span>
+                    <span aria-hidden="true">→</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+            {ready && !wantsCreate && (
+              <button
+                type="button"
+                className="w-full mt-4 p-4 border border-solid border-neutral-300 rounded-sm bg-white text-neutral-800 text-base cursor-pointer hover:border-neutral-500"
+                data-fidelity-state="signin-create-another"
+                onClick={() => setWantsCreate(true)}
+              >
+                Create another workspace
+              </button>
+            )}
+          </section>
+        )}
+
+        {config && closed && !showMemberships && (
           <div
             className="w-[94%] max-w-[320px] mt-0 mx-auto mb-8 p-4 border border-solid border-[#d8d6d4] rounded-sm bg-white shadow-[0_2px_4px_rgba(0,0,0,0.05)] text-left"
             data-fidelity-state="signin-notice"
@@ -431,6 +501,7 @@ export function SignupPage() {
           !closed &&
           config.available &&
           !request &&
+          (!showMemberships || wantsCreate) &&
           (session === null ? (
             <p
               className="my-4 mx-auto text-[#666] text-[12.8px]"

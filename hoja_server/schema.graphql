@@ -9,6 +9,8 @@ type Organization {
   id: ID!
   name: String!
   urlKey: String!
+  "Where this workspace is served: https://<its own host>, or the canonical app URL. Its GraphQL endpoint is <origin>/graphql and its MCP endpoint <origin>/mcp."
+  origin: String!
 }
 
 type ApiKey {
@@ -63,11 +65,18 @@ type WorkspaceMembership {
   name: String!
   urlKey: String!
   role: String!
+  "Where this workspace is served; see Organization.origin."
+  origin: String!
 }
 
 type OrganizationPayload {
   success: Boolean!
   organization: Organization
+  """
+  Set when the workspace must be opened on another host (its own address): the
+  browser navigates here instead of switching in place. No session was changed.
+  """
+  redirectUrl: String
 }
 
 type UserPayload {

@@ -23,7 +23,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
 from ariadne import format_error, graphql_sync
 from graphql import (
@@ -37,6 +37,7 @@ from graphql import (
 )
 from sqlalchemy import and_, or_, select, text
 from starlette.applications import Starlette
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import MutableHeaders
 from starlette.middleware.gzip import GZipMiddleware
@@ -50,6 +51,7 @@ from hoja_server import (
     google_login,
     google_oidc,
     identity_transfer,
+    invite_policy,
     mail_events,
     membership_announce,
     observability,
@@ -60,6 +62,7 @@ from hoja_server import (
     tenant_context,
     tenant_hosts,
     uploads,
+    workspace_directory,
 )
 from hoja_server.connect_api import connect_routes
 from hoja_server.connectors_api import connector_binding_for, connector_routes
@@ -482,7 +485,22 @@ def create_app(
     def _validate_creds(creds):
         keys = [h for kind, h in creds if kind == "key"]
         sessions = [h for kind, h in creds if kind == "session"]
-        return store.validate_credentials(keys, sessions)
+        out = store.validate_credentials(keys, sessions)
+        oauth = list({h for kind, h in creds if kind == "oauth"})
+        if oauth:
+            from sqlalchemy import select
+
+            from hoja_server.db import oauth_access_token
+            now = datetime.now(timezone.utc).isoformat()
+            with tenant_context.system(), engine.connect() as conn:
+                for th, uid, org in conn.execute(select(
+                        oauth_access_token.c.token_hash, oauth_access_token.c.user_id,
+                        oauth_access_token.c.organization_id).where(
+                        oauth_access_token.c.token_hash.in_(oauth), oauth_access_token.c.revoked_at.is_(None),
+                        oauth_access_token.c.expires_at > now)):
+                    if store.membership_for_profile(org, uid):
+                        out[("oauth", th)] = (uid, org)
+        return out
 
     hub.validate = _validate_creds
 
@@ -609,8 +627,12 @@ def create_app(
         with tenant_context.system():
             result = _resolve_auth(request)
         if result[0]:
-            pinned = tenant_hosts.required_org(request.scope)
-            if pinned and result[1] != pinned:
+            refusal = tenant_hosts.host_refusal(host_map, request.scope, result[1], credential=not result[3])
+            if refusal:
+                # Valid, but not on this host. /graphql and /mcp turn this into a
+                # wrong_workspace_host answer instead of a bare 401 (which makes
+                # OAuth clients start sign-in again for nothing).
+                request.state.host_refusal = refusal
                 return None, None, None, False
             # HOJA-490: an IP allowlist is enforced here, not in the UI. An
             # admin is exempt on purpose: a wrong allowlist must not lock the
@@ -626,6 +648,52 @@ def create_app(
             tenant_context.enter(result[1], result[0], getattr(request.state, "actor_kind", "human"))
         return result
 
+    def _oauth_graphql_credential(request: Request, token: str) -> dict | None:
+        """An OAuth access token issued for this host's <origin>/graphql, or None.
+
+        Same rules as an API key: hoja:write is read_write, anything else read.
+        A token for <origin>/mcp from a third-party client is not accepted here;
+        a Hoja CLI token covers both endpoints of its origin. A token that
+        matched by hash but is revoked or expired marks the request so /graphql
+        answers 401 invalid_token, which tells a client to refresh.
+        """
+        if not trust_proxy:
+            return None
+        from sqlalchemy import select
+
+        from hoja_server.db import oauth_access_token
+        from hoja_server.mcp_oauth import FIRST_PARTY_CLIENT_ID, WRITE_SCOPE, touch_grant
+
+        with tenant_context.system(), engine.connect() as conn:
+            row = conn.execute(select(oauth_access_token).where(
+                oauth_access_token.c.token_hash == token_hash(token))).mappings().first()
+        if row is None:
+            return None
+        if row["revoked_at"] is not None or row["expires_at"] <= datetime.now(timezone.utc).isoformat():
+            request.state.oauth_invalid = True
+            return None
+        origin = f"https://{_origin_host(request)}"
+        accepted = {origin + "/graphql"}
+        if row["client_id"] == FIRST_PARTY_CLIENT_ID:
+            accepted.add(origin + "/mcp")
+        resource = (row["resource"] or "").rstrip("/")
+        if resource not in accepted:
+            own = urlsplit(resource)
+            if own.scheme == "https" and own.netloc and own.netloc != _origin_host(request):
+                # A valid token minted on another workspace's host: say where it works.
+                request.state.host_refusal = {
+                    "code": tenant_hosts.WRONG_WORKSPACE_HOST, "reason": "token_for_other_host",
+                    "message": f"This token was issued for https://{own.netloc}.",
+                    "origin": f"https://{own.netloc}",
+                }
+            return None
+        if not store.membership_for_profile(row["organization_id"], row["user_id"]):
+            return None
+        touch_grant(engine, row["grant_id"], _client_ip(request))
+        scopes = json.loads(row["scopes"] or "[]")
+        return {"user_id": row["user_id"], "org_id": row["organization_id"], "grant_id": row["grant_id"],
+                "access": "read_write" if WRITE_SCOPE in scopes else "read"}
+
     def _resolve_auth(request: Request):
         raw = request.headers.get("authorization", "") or request.headers.get("Authorization", "")
         token = raw[7:].strip() if raw.lower().startswith("bearer ") else raw.strip()
@@ -638,6 +706,11 @@ def create_app(
                 # An agent principal's key writes as the agent (HOJA-602-A-3).
                 request.state.actor_kind = key.get("kind") or "human"
                 return key["user_id"], key["organization_id"], None, False
+            oauth = _oauth_graphql_credential(request, token)
+            if oauth:
+                request.state.api_key_access = oauth["access"]
+                request.state.oauth_grant = oauth["grant_id"]
+                return oauth["user_id"], oauth["org_id"], None, False
             # The presented credential did not resolve (e.g. the browser SPA's
             # "session" sentinel). Fall through to the browser session cookie
             # instead of rejecting the request outright.
@@ -666,6 +739,8 @@ def create_app(
         token = raw[7:].strip() if raw.lower().startswith("bearer ") else raw.strip()
         if token and store.resolve_token(token):
             return uid, org, ("key", token_hash(token))
+        if token and getattr(websocket.state, "oauth_grant", None) is not None:
+            return uid, org, ("oauth", token_hash(token))
         session_token = websocket.cookies.get("hoja_session")
         if session_token and _is_session:
             return uid, org, ("session", token_hash(session_token))
@@ -792,16 +867,46 @@ def create_app(
                 "client_id": "api-key",
             }
 
-    def _mcp_oauth_auth(request: Request):
+    def _wrong_host_response(refusal: dict, path: str) -> JSONResponse:
+        """403, not 401: the credential is valid, so a client must not start sign-in again."""
+        url = refusal["origin"] + path
+        message = refusal["message"] + f" Use {url}."
+        # Stable shape on /graphql and /mcp: {error, code, url}; clients follow url.
+        # "errors" repeats it in GraphQL's own error shape for GraphQL clients.
+        return JSONResponse(
+            {
+                "error": message,
+                "code": refusal["code"],
+                "url": url,
+                "reason": refusal["reason"],
+                "errors": [{"message": message, "extensions": {"code": refusal["code"], "url": url}}],
+            },
+            status_code=403,
+        )
+
+    def _auth_required(request: Request) -> JSONResponse:
+        """The REST endpoints' 401, unless the real answer is "wrong host".
+
+        A valid credential presented on another workspace's host (or a vanity
+        workspace's credential on the apex) is not "not authenticated": clients
+        such as the mobile app would tell the person their key is invalid and
+        never recover. They get the same 403 wrong_workspace_host as /graphql.
+        """
+        refusal = getattr(request.state, "host_refusal", None)
+        if refusal:
+            return _wrong_host_response(refusal, request.url.path)
+        return JSONResponse({"error": "Authentication required"}, status_code=401)
+
+    def _mcp_oauth_auth(request: Request, principal: dict | None = None):
         """Resolve a valid MCP bearer to the same pinned Hoja identity."""
-        raw = request.headers.get("authorization", "")
-        if not raw.lower().startswith("bearer "):
-            return None
-        principal = _mcp_bearer_credential(raw[7:].strip())
+        if principal is None:
+            raw = request.headers.get("authorization", "")
+            if not raw.lower().startswith("bearer "):
+                return None
+            principal = _mcp_bearer_credential(raw[7:].strip())
         if principal is None:
             return None
-        pinned = tenant_hosts.required_org(request.scope)
-        if pinned and principal["org_id"] != pinned:
+        if tenant_hosts.host_refusal(host_map, request.scope, principal["org_id"], credential=True):
             return None
         # Bind before the membership and workspace reads: those are tenant rows, and
         # under RLS an unbound read returns no rows instead of raising, so a missing
@@ -824,7 +929,13 @@ def create_app(
             "Install the server extra: python -m pip install 'hoja-cli[server]' "
             "(from a checkout: uv sync --extra dev --extra server)."
         )
-    from hoja_server.mcp_oauth import HojaOAuthProvider, build_server
+    from hoja_server.mcp_oauth import (
+        DEVICE_GRANT,
+        REQUEST_CLIENT_IP,
+        REQUEST_META,
+        HojaOAuthProvider,
+        build_server,
+    )
 
     # OAuth stays fully disabled unless an explicit public origin and trusted
     # proxy CIDR configuration are provided by the deployment.
@@ -866,7 +977,8 @@ def create_app(
         except ValueError:
             return False
         return bool(address and any(address in network for network in proxy_networks))
-    mcp_provider = HojaOAuthProvider(engine, store, trusted_proxy=trust_proxy, public_host=public_host)
+    mcp_provider = HojaOAuthProvider(engine, store, trusted_proxy=trust_proxy, public_host=public_host,
+                                      workspace_host=host_map.host_for)
     mcp_server = build_server(mcp_provider, public_host=public_host)
     mcp_pinned: dict = {}
 
@@ -912,6 +1024,95 @@ def create_app(
         ),
     )
 
+    def _consent_sign_in_url(request: Request, path: str) -> str:
+        """Where a signed-out browser goes to sign in before the consent page, and back.
+
+        The way back is carried server-side wherever the hosted sign-in serves
+        this host: the control plane's ``/signin?next=<this consent URL>`` hands
+        the browser back to ``/auth/google/finish?to=<consent path>`` on this
+        host. Elsewhere (no hosted sign-in) the web app's login screen keeps the
+        same path in ``next`` and resumes it after the password sign-in.
+        """
+        pending = request.query_params.get("pending") or ""
+        consent = path + "?" + urlencode({"pending": pending})
+        control_plane = signup_config.control_plane_url
+        if control_plane and _is_tenant_origin(request):
+            host = _signup_host(request).split(":")[0].lower()
+            target = _tenant_transfer_target(f"https://{host}{consent}")
+            if target is not None:
+                return f"{control_plane}/signin?next={quote(target, safe='')}"
+        return "/auth/login?next=" + quote(consent, safe="")
+
+    async def _mcp_bearer_gate(request: Request, scope, receive, send):
+        """Answer what the SDK would get wrong for a bearer, or return the receive to continue with.
+
+        * A valid credential on the wrong host gets 403 wrong_workspace_host
+          naming its own MCP URL, not the SDK's 401 (which starts OAuth again).
+        * An OAuth token without hoja:write calling a write tool gets 403
+          insufficient_scope with the scopes to ask for (MCP authorization,
+          "Scope challenge handling"), so the client re-authorizes for write
+          instead of the tool failing after the fact. Stateless HTTP puts the
+          whole JSON-RPC message in this request body, so the tool name is known
+          before anything runs.
+        Returns None when a response was sent, else ``(receive, principal)``.
+        """
+        raw = request.headers.get("authorization", "")
+        if not raw.lower().startswith("bearer "):
+            return receive, None
+        principal = _mcp_bearer_credential(raw[7:].strip())
+        if principal is None:
+            return receive, None
+        refusal = tenant_hosts.host_refusal(host_map, scope, principal["org_id"], credential=True)
+        if refusal:
+            await _wrong_host_response(refusal, "/mcp")(scope, receive, send)
+            return None
+        root = scope.get("root_path", "")
+        path = scope.get("path", "")
+        sub = path[len(root):] if root and path.startswith(root) else path
+        if scope.get("method") != "POST" or sub not in ("", "/"):
+            return receive, principal
+        from hoja_server.mcp_oauth import READ_SCOPE, WRITE_SCOPE
+        from hoja_server.mcp_tools import write_tool_names
+
+        if principal["client_id"] == "api-key" or WRITE_SCOPE in json.loads(principal["scopes"] or "[]"):
+            return receive, principal
+        chunks, more = [], True
+        while more:
+            message = await receive()
+            if message["type"] != "http.request":
+                break
+            chunks.append(message.get("body", b""))
+            more = message.get("more_body", False)
+        body = b"".join(chunks)
+
+        async def replay():
+            nonlocal body
+            if body is None:
+                return await receive()
+            data, body = body, None
+            return {"type": "http.request", "body": data, "more_body": False}
+
+        try:
+            parsed = json.loads(body) if len(body) <= _MAX_GRAPHQL_BODY else None
+        except ValueError:
+            parsed = None
+        messages = parsed if isinstance(parsed, list) else [parsed]
+        names = write_tool_names()
+        if not any(isinstance(m, dict) and m.get("method") == "tools/call"
+                   and isinstance(m.get("params"), dict) and m["params"].get("name") in names
+                   for m in messages):
+            return replay, principal
+        origin = f"https://{_origin_host(request)}"
+        description = "This tool changes data and needs hoja:write; reconnect with read and write access."
+        challenge = (
+            f'Bearer error="insufficient_scope", scope="{READ_SCOPE} {WRITE_SCOPE}", '
+            f'resource_metadata="{origin}/.well-known/oauth-protected-resource/mcp", '
+            f'error_description="{description}"'
+        )
+        await JSONResponse({"error": "insufficient_scope", "error_description": description},
+                           status_code=403, headers={"WWW-Authenticate": challenge})(scope, replay, send)
+        return None
+
     async def mcp_endpoint(scope, receive, send):
         # MCP operations are logged by the tool dispatcher, which is the only
         # place that knows the tool name: the SDK runs a call in its own task, so
@@ -919,7 +1120,7 @@ def create_app(
         observability.annotate(scope, transport="mcp")
         observability.suppress(scope)
         request = Request(scope)
-        auth_context = _mcp_oauth_auth(request)
+        auth_context = None
         trusted_peer = _request_from_trusted_proxy(request)
         incoming_host = request.headers.get("host", "").lower()
         canonical_host = public_host.strip().lower()
@@ -927,7 +1128,6 @@ def create_app(
         host_ok = (incoming_host == canonical_host or incoming_host.startswith(canonical_host + ":")
                    or bool(pinned_org))
         if trust_proxy and (not trusted_peer or not host_ok):
-            auth_context = None
             if not host_ok:
                 response = JSONResponse({"error": "Untrusted Host header."}, status_code=421)
                 await response(scope, receive, send)
@@ -935,9 +1135,61 @@ def create_app(
             response = JSONResponse({"error": "Request did not originate from a trusted proxy."}, status_code=403)
             await response(scope, receive, send)
             return
-        # The browser authorize/consent endpoints authenticate via the existing
-        # Hoja session cookie; only MCP resource calls use the OAuth bearer.
-        if scope.get("method") in ("GET", "POST") and scope.get("path", "").endswith("/oauth/consent"):
+        # register_client has no request; it reads the caller's address from here.
+        REQUEST_CLIENT_IP.set(_client_ip(request))
+        REQUEST_META.set({"ip": _client_ip(request), "user_agent": request.headers.get("user-agent"),
+                          "device_name": request.query_params.get("device_name")})
+        path = scope.get("path", "")
+        root = scope.get("root_path", "")
+        sub = path[len(root):] if root and path.startswith(root) else path
+        method = scope.get("method")
+        issuer = f"https://{_origin_host(request)}/mcp"
+        # Metadata exists twice: this app's /.well-known routes and the SDK's own
+        # copies under /mcp. Both answer with the one document.
+        if method == "GET" and sub.endswith("/.well-known/oauth-authorization-server"):
+            await JSONResponse(_authorization_metadata(request))(scope, receive, send)
+            return
+        if method == "GET" and "/.well-known/oauth-protected-resource" in sub:
+            await JSONResponse(_resource_metadata(request))(scope, receive, send)
+            return
+        if method == "POST" and sub == "/token":
+            receive, body = await _buffer_body(receive)
+            form = parse_qs(body.decode("latin-1"))
+            if (form.get("grant_type") or [""])[0] == DEVICE_GRANT:
+                # The SDK token handler knows authorization_code and refresh_token
+                # only; the RFC 8628 device grant is answered here.
+                status, payload = await run_in_threadpool(
+                    _provider_for(request).poll_device, {k: v[0] for k, v in form.items()})
+                await JSONResponse(payload, status_code=status,
+                                   headers={"cache-control": "no-store", "pragma": "no-cache"})(scope, receive, send)
+                return
+        if method == "POST" and sub == "/revoke":
+            # RFC 7009 lets a public client (token_endpoint_auth_method "none")
+            # revoke with client_id alone. The SDK's RevocationRequest declares
+            # `client_secret: str | None` without a default (mcp 2.2.0), which
+            # makes the field required, so every public client's logout was a
+            # 400. Supply the empty secret the SDK's own "none" check expects.
+            receive, body = await _buffer_body(receive)
+            if "client_secret" not in parse_qs(body.decode("latin-1"), keep_blank_values=True):
+                body = body + (b"&" if body else b"") + b"client_secret="
+                headers = [(k, v) for k, v in scope.get("headers", []) if k.lower() != b"content-length"]
+                scope = {**scope, "headers": headers + [(b"content-length", str(len(body)).encode())]}
+                sent = False
+
+                async def receive():  # noqa: F811 - replaces the buffered receive with the amended body
+                    nonlocal sent
+                    if sent:
+                        return {"type": "http.disconnect"}
+                    sent = True
+                    return {"type": "http.request", "body": body, "more_body": False}
+        if method == "GET" and sub == "/authorize":
+            # RFC 9207: every authorization response names the issuer, including
+            # the SDK's error redirects back to the client.
+            send = _with_issuer_on_error_redirect(send, issuer)
+        if scope.get("method") in ("GET", "POST") and path.endswith("/oauth/consent"):
+            # Consent is a person at a browser: only the Hoja session cookie counts.
+            # A bearer (API key or OAuth token) never approves a grant, so it is
+            # not consulted here at all.
             uid, org, identity_id, is_session = _auth(request)
             if uid and is_session:
                 member = store.membership_for_profile(org, uid)
@@ -945,9 +1197,22 @@ def create_app(
                     "user_id": uid,
                     "org_id": org,
                     "identity_id": identity_id or (member or {}).get("identity_id"),
-                    "org_name": (store.workspace(org) or {}).get("name"),
                     "source": "browser_session",
                 }
+            elif scope.get("method") == "GET":
+                response = RedirectResponse(
+                    _consent_sign_in_url(request, path), status_code=303,
+                    headers={"cache-control": "no-store"})
+                await response(scope, receive, send)
+                return
+        else:
+            gated = await _mcp_bearer_gate(request, scope, receive, send)
+            if gated is None:
+                return
+            receive, principal = gated
+            # Resource calls: the SDK authenticates the bearer itself; this keeps
+            # the resolved principal on the scope for the routes that read it.
+            auth_context = _mcp_oauth_auth(request, principal) if principal else None
         scope["hoja_auth"] = auth_context
         root_path = scope.get("root_path", "")
         if root_path.endswith("/.well-known/oauth-authorization-server/mcp"):
@@ -967,22 +1232,154 @@ def create_app(
             return
         await mcp_asgi(scope, receive, send)
 
+    def _authorization_metadata(request: Request) -> dict:
+        """RFC 8414 metadata for this host's authorization server (issuer <origin>/mcp)."""
+        origin = f"https://{_origin_host(request)}" if trust_proxy else "https://mcp.invalid"
+        issuer = origin + "/mcp"
+        return {
+            "issuer": issuer, "authorization_endpoint": issuer + "/authorize",
+            "token_endpoint": issuer + "/token", "registration_endpoint": issuer + "/register",
+            "revocation_endpoint": issuer + "/revoke",
+            "device_authorization_endpoint": issuer + "/device",
+            "scopes_supported": ["hoja:read", "hoja:write"], "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", "refresh_token", DEVICE_GRANT],
+            "token_endpoint_auth_methods_supported": ["none"],
+            "code_challenge_methods_supported": ["S256"],
+            "authorization_response_iss_parameter_supported": True,
+        }
+
+    def _resource_metadata(request: Request) -> dict:
+        issuer = (f"https://{_origin_host(request)}" if trust_proxy else "https://mcp.invalid") + "/mcp"
+        # Both scopes: spec clients request what is listed here, and the consent
+        # screen lets the person narrow it to read only.
+        return {"resource": issuer, "authorization_servers": [issuer],
+                "scopes_supported": ["hoja:read", "hoja:write"]}
+
     async def authorization_metadata_endpoint(request: Request):
         if not trust_proxy:
             return JSONResponse({"error": "OAuth is not configured."}, status_code=404)
         if not _request_from_trusted_proxy(request):
             return JSONResponse({"error": "OAuth is available only behind the configured trusted proxy."}, status_code=404)
-        origin = f"https://{_origin_host(request)}" if trust_proxy else "https://mcp.invalid"
-        issuer = origin + "/mcp"
-        return JSONResponse({"issuer": issuer, "authorization_endpoint": issuer + "/authorize", "token_endpoint": issuer + "/token", "registration_endpoint": issuer + "/register", "revocation_endpoint": issuer + "/revoke", "scopes_supported": ["hoja:read", "hoja:write"], "response_types_supported": ["code"], "grant_types_supported": ["authorization_code", "refresh_token"], "code_challenge_methods_supported": ["S256"]})
+        return JSONResponse(_authorization_metadata(request))
 
     async def resource_metadata_endpoint(request: Request):
         if not trust_proxy:
             return JSONResponse({"error": "OAuth is not configured."}, status_code=404)
         if not _request_from_trusted_proxy(request):
             return JSONResponse({"error": "OAuth is available only behind the configured trusted proxy."}, status_code=404)
-        issuer = (f"https://{_origin_host(request)}" if trust_proxy else "https://mcp.invalid") + "/mcp"
-        return JSONResponse({"resource": issuer, "authorization_servers": [issuer], "scopes_supported": ["hoja:read"]})
+        return JSONResponse(_resource_metadata(request))
+
+    def _provider_for(request: Request):
+        """The authorization server for this request's host (pinned workspace or canonical)."""
+        pinned = tenant_hosts.required_org(request.scope)
+        return HojaOAuthProvider(engine, store, trusted_proxy=trust_proxy, public_host=_origin_host(request),
+                                 required_org=pinned, workspace_host=host_map.host_for)
+
+    async def _buffer_body(receive):
+        """Read a whole request body, and a receive that replays it."""
+        chunks, more = [], True
+        while more:
+            message = await receive()
+            if message["type"] != "http.request":
+                break
+            chunks.append(message.get("body", b""))
+            more = message.get("more_body", False)
+        body = b"".join(chunks)
+        sent = False
+
+        async def replay():
+            nonlocal sent
+            if sent:
+                return await receive()
+            sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        return replay, body
+
+    def _with_issuer_on_error_redirect(send, issuer: str):
+        async def wrapped(message):
+            if message["type"] == "http.response.start" and message["status"] in (302, 303, 307):
+                headers = []
+                for name, value in message.get("headers", []):
+                    if name.lower() == b"location":
+                        location = value.decode("latin-1")
+                        query = parse_qs(urlsplit(location).query)
+                        if "error" in query and "iss" not in query:
+                            location += ("&" if "?" in location else "?") + urlencode({"iss": issuer})
+                            value = location.encode("latin-1")
+                    headers.append((name, value))
+                message = {**message, "headers": headers}
+            await send(message)
+        return wrapped
+
+    async def device_page(request: Request):
+        """<origin>/device: a person approves an app that showed them a code (RFC 8628)."""
+        if not trust_proxy:
+            return JSONResponse({"error": "OAuth is not configured."}, status_code=404)
+        from hoja_server import consent_pages
+
+        provider = _provider_for(request)
+        raw_code = request.query_params.get("user_code") or ""
+        uid, org, identity_id, is_session = await run_in_threadpool(_auth, request)
+        if not (uid and is_session):
+            if request.method == "POST":
+                return HTMLResponse(consent_pages.denied_page(
+                    title="Sign in to approve", message="Approving an app needs a signed-in browser."),
+                    status_code=401)
+            return RedirectResponse(_device_sign_in_url(request), status_code=303,
+                                    headers={"cache-control": "no-store"})
+        member = store.membership_for_profile(org, uid)
+        auth = {"user_id": uid, "org_id": org, "source": "browser_session",
+                "identity_id": identity_id or (member or {}).get("identity_id")}
+        no_store = {"cache-control": "no-store"}
+        if request.method == "POST":
+            form = await request.form()
+            outcome, page = await run_in_threadpool(provider.decide_device, auth, raw_code, form)
+            if page:
+                return HTMLResponse(page, status_code=403 if outcome == "refused" else 400, headers=no_store)
+            return HTMLResponse(consent_pages.device_done_page(approved=outcome == "approved"), headers=no_store)
+        if not raw_code:
+            return HTMLResponse(consent_pages.device_code_page(), headers=no_store)
+        row = provider.pending_device(raw_code)
+        now = datetime.now(timezone.utc).isoformat()
+        if row is None:
+            return HTMLResponse(consent_pages.device_code_page(
+                error="That code is not valid. Check it and try again."), status_code=400, headers=no_store)
+        if row["status"] != "pending" or row["expires_at"] <= now:
+            return HTMLResponse(consent_pages.expired_page(client_name="Hoja CLI"), status_code=400,
+                                headers=no_store)
+        workspaces, elsewhere = provider.consent_workspaces(auth)
+        if not workspaces:
+            return HTMLResponse(consent_pages.wrong_host_page(client_name="Hoja CLI", workspaces=elsewhere),
+                                status_code=409, headers=no_store)
+        selected = org if any(w["id"] == org for w in workspaces) else workspaces[0]["id"]
+        profile = provider._member_profile(auth, selected) or uid
+        with tenant_context.scoped(selected):
+            viewer = store.get_user(selected, profile) or {}
+        label = row["device_label"]
+        return HTMLResponse(consent_pages.consent_page(
+            client_name="Hoja CLI",
+            redirect_host=(f"{label} · code {row['user_code']}" if label else f"code {row['user_code']}"),
+            workspaces=workspaces, selected_org=selected,
+            workspace_fixed=bool(tenant_hosts.required_org(request.scope)),
+            host=_origin_host(request),
+            can_write="hoja:write" in provider.max_scopes(selected, profile),
+            write_requested="hoja:write" in json.loads(row["scopes"]),
+            csrf_token=row["csrf_token"], email=viewer.get("email"),
+            switch_account_url="/signout", other_hosts=elsewhere,
+            returns_label="Device",
+        ), headers=no_store)
+
+    def _device_sign_in_url(request: Request) -> str:
+        code = request.query_params.get("user_code") or ""
+        path = "/device" + (("?" + urlencode({"user_code": code})) if code else "")
+        control_plane = signup_config.control_plane_url
+        if control_plane and _is_tenant_origin(request):
+            host = _signup_host(request).split(":")[0].lower()
+            target = _tenant_transfer_target(f"https://{host}{path}")
+            if target is not None:
+                return f"{control_plane}/signin?next={quote(target, safe='')}"
+        return "/auth/login?next=" + quote(path, safe="")
 
     from starlette.routing import Mount
 
@@ -1155,8 +1552,15 @@ def create_app(
                 request.scope, org=org,
                 actor_kind=getattr(request.state, "actor_kind", "human"), actor_id=uid,
             )
+        refusal = getattr(request.state, "host_refusal", None) if not uid else None
+        if refusal:
+            observability.annotate(request.scope, operation="unauthenticated", outcome="error:WRONG_WORKSPACE_HOST")
+            return _wrong_host_response(refusal, "/graphql")
         if not uid:
             observability.annotate(request.scope, operation="unauthenticated", outcome="error:UNAUTHENTICATED")
+            # A presented bearer that failed (unknown, expired or revoked) gets the
+            # RFC 6750 challenge, so an OAuth client refreshes instead of giving up.
+            bearer = request.headers.get("authorization", "").lower().startswith("bearer ")
             return JSONResponse(
                 {
                     "errors": [
@@ -1167,6 +1571,7 @@ def create_app(
                     ]
                 },
                 status_code=401,
+                headers={"WWW-Authenticate": 'Bearer error="invalid_token"'} if bearer else None,
             )
         csrf = _cookie_csrf_error(request, json_only=True)
         if csrf:
@@ -1205,6 +1610,8 @@ def create_app(
             "identity_id": identity_id,
             "browser_session": is_browser_session,
             "access": access,
+            "pinned_org": tenant_hosts.required_org(request.scope),
+            "org_redirect": lambda target_org: _org_redirect(request, target_org),
         }
         # Sync resolvers would otherwise run on the event loop and block every
         # WS client; execute the whole GraphQL operation in a worker thread.
@@ -1229,6 +1636,11 @@ def create_app(
         if isinstance(query, str) and "mutation" in query:
             hub.kick()
         target = context.get("switch_target")
+        pinned_here = context["pinned_org"]
+        if target and pinned_here and target["organization_id"] != pinned_here:
+            # Never trade this host's session for one it would refuse: that is
+            # how a switch on a workspace's own address used to lock it out.
+            target = None
         if target:
             session_token, _details = store.create_session_for_membership(
                 target.get("identity_id", identity_id), target["user_id"], target["organization_id"]
@@ -1386,19 +1798,40 @@ def create_app(
             headers={"cache-control": "no-store"},
         )
 
-    def _announce_member(request: Request, email: str) -> None:
-        """Tell the control plane about a membership we just proved.
+    def _announce_member(request: Request, email: str) -> BackgroundTask | None:
+        """Tell the control plane about a membership we just proved, after the response.
 
         Called only where the address is established: an accepted invitation
         (holding the code proves control of the mailbox) or a completed Google
-        sign-in on this host. Best effort, and never on the request path's
-        critical section.
+        sign-in on this host. Returns a task for the caller to attach to its
+        response, so the HTTP call runs after the browser has its answer and
+        never on the event loop; ``None`` when there is nothing to announce.
+
+        Skipped in the shared tier: there the control plane reads membership
+        rows directly (``workspace_directory``), and a hint could only be a
+        staler copy of the same database.
+
+        Signed with this host's own key: the configured
+        ``HOJA_IDENTITY_TRANSFER_KEY`` when a dedicated tenant has one, else
+        the key derived from the master for this host, which is exactly the key
+        ``/internal/membership`` reconstructs to verify it.
         """
+        if _shared_directory() or not signup_config.control_plane_url:
+            return None
         host = _signup_host(request).split(":")[0].lower()
         slug = host.split(".")[0]
+        key = signup_config.identity_transfer_key
+        if not key and signup_config.identity_transfer_master and host:
+            try:
+                key = identity_transfer.tenant_key(signup_config.identity_transfer_master, host)
+            except identity_transfer.TransferError:
+                key = None
+        if not key or "@" not in (email or ""):
+            return None
         expires = (datetime.now(timezone.utc) + timedelta(days=400)).isoformat()
-        membership_announce.announce(
-            tenant_key=signup_config.identity_transfer_key,
+        return BackgroundTask(
+            membership_announce.announce,
+            tenant_key=key,
             control_plane_url=signup_config.control_plane_url,
             slug=slug,
             email=email,
@@ -1442,8 +1875,9 @@ def create_app(
                 status_code=401,
             )
         session_token, identity = result
-        _announce_member(request, str(body.get("email") or "").strip().lower())
         response = JSONResponse({"status": "accepted"})
+        response.background = _announce_member(
+            request, str(body.get("email") or "").strip().lower())
         response.set_cookie(
             "hoja_session",
             session_token,
@@ -1756,6 +2190,12 @@ def create_app(
                         status_code=403,
                     )
         session_token, identity = result
+        elsewhere = _org_redirect(request, identity_org)
+        if elsewhere:
+            # An enterprise workspace is used on its own host, never on the apex:
+            # this session would be a host-only cookie in the wrong place.
+            store.revoke_browser_session(session_token)
+            return JSONResponse({"status": "redirect", "redirectUrl": elsewhere})
         response = JSONResponse({"status": "authenticated", "expiresAt": identity["expires_at"]})
         response.set_cookie(
             "hoja_session",
@@ -1942,7 +2382,31 @@ def create_app(
             response.delete_cookie(cookie, **_session_cookie_attrs(request))
         return response
 
+    def _session_elsewhere(request: Request) -> str | None:
+        """For a browser on the apex holding a session of a workspace with its own host:
+        where that workspace actually lives. None everywhere else.
+
+        Read straight from the cookie, before ``_auth``: whether the apex still
+        *accepts* such a session is the credential layer's decision, while this
+        only tells the browser where to go instead.
+        """
+        if not host_map.canonical or tenant_hosts.required_org(request.scope):
+            return None
+        raw = request.cookies.get("hoja_session")
+        if not raw:
+            return None
+        with tenant_context.system():
+            session = store.resolve_browser_session(raw)
+        return _org_redirect(request, session["organization_id"]) if session else None
+
     async def auth_me(request: Request):
+        elsewhere = _session_elsewhere(request)
+        if elsewhere:
+            return JSONResponse(
+                {"error": "This workspace has its own address.",
+                 "reason": "wrong_workspace_host", "redirectUrl": elsewhere},
+                status_code=409, headers={"cache-control": "no-store"},
+            )
         uid, org, _identity_id, _browser_session = _auth(request)
         if not uid:
             return JSONResponse({"error": "Authentication required"}, status_code=401)
@@ -2107,12 +2571,20 @@ def create_app(
         status_code: int,
         host: str | None = None,
         email: str | None = None,
+        retry_url: str | None = None,
+        invited_hint: str | None = None,
+        invited_url: str | None = None,
     ) -> Response:
         """One refusal, two audiences: a page a person can act on, and the JSON contract.
 
         The refusal stays a refusal: same status, same reason code, no statement about
         whether the address or workspace exists. The error id is the only new data, and
         it is what makes a support conversation possible instead of a dead end.
+
+        ``retry_url`` restarts the same sign-in for the same workspace; it is the
+        primary action for a transient failure (an expired link, a cancelled
+        Google prompt), which must never read as "not authorised". It defaults to
+        this host's sign-in entry.
         """
         error_id = secrets.token_hex(6)
         _security_log.warning(f"auth.denied id={error_id} host={host or '-'} reason={reason}")
@@ -2124,6 +2596,9 @@ def create_app(
                 reason=reason,
                 error_id=error_id,
                 entry_url=_switch_account_url(request),
+                retry_url=retry_url or _canonical_login_url(request) or "/signin",
+                invited_hint=invited_hint,
+                invited_url=invited_url,
             )
             return HTMLResponse(
                 page, status_code=status_code, headers={**headers, "cache-control": "no-store"}
@@ -2187,10 +2662,17 @@ def create_app(
         picture: str | None,
         tenant_target: str,
         source: str,
+        request: Request | None = None,
     ) -> Response:
         """Mint the per-tenant handoff from an already verified identity."""
         master = signup_config.identity_transfer_master
         if not master:
+            if request is not None:
+                return _signin_failure(
+                    request, error="Identity handoff is not configured on this deployment.",
+                    reason="transfer_unconfigured", status_code=503,
+                    host=urlsplit(tenant_target).hostname,
+                )
             return JSONResponse(
                 {"error": "Identity handoff is not configured on this deployment.",
                  "reason": "transfer_unconfigured"},
@@ -2213,15 +2695,117 @@ def create_app(
         # may carry `?invite=<code>`, and concatenating a path onto that both
         # swallows `/auth/google/finish` into the parameter and puts the signed
         # token in a URL that lands in history and access logs.
-        response = RedirectResponse(
-            f"https://{target_host}/auth/google/finish?t={quote(transfer, safe='')}",
-            status_code=302,
-        )
+        finish = f"https://{target_host}/auth/google/finish?t={quote(transfer, safe='')}"
+        # A pending app approval is the one deep path carried through the handoff;
+        # the tenant validates it again with _safe_return_to before redirecting.
+        back = identity_transfer.return_path(tenant_target)
+        if back:
+            finish += f"&to={quote(back, safe='')}"
+        response = RedirectResponse(finish, status_code=302)
         response.delete_cookie(_OIDC_FLOW_COOKIE, path="/")
         return response
 
-    def _workspace_origin(slug: str) -> str:
+    def _shared_directory() -> bool:
+        """True when the control plane runs in the same deployment as the workspaces.
+
+        The shared tier pins enterprise workspaces to their own hosts with
+        ``TenantHosts``; when its canonical host is also the control plane, the
+        organization and membership rows are in this database and are the
+        authority on who belongs where.
+        """
+        return bool(host_map.canonical) and host_map.canonical == _control_plane_host()
+
+    def _dedicated_origin(slug: str) -> str:
+        """A dedicated tenant's origin: its slug under the base domain, by construction.
+
+        Only for the dedicated tier, where a tenant's host *is* ``<slug>.<base>``
+        (its announce key is derived from that name). The shared tier never
+        guesses: it reads ``organization.vanity_host``.
+        """
         return f"https://{slug}.{signup_config.tenant_base_domain}/"
+
+    def _directory(identity: dict | None) -> list[dict]:
+        """The workspaces this control-plane identity can be sent to, with real origins.
+
+        Entries are ``{"name", "slug", "host", "origin", "status", "role"}`` with
+        ``status`` ``active`` or ``invited``. Shared tier: the membership rows
+        themselves, for the Google-verified address only. Dedicated tier: what
+        the control plane recorded at sign-up and what tenants announced.
+        """
+        if identity is None:
+            return []
+        if _shared_directory():
+            if not identity.get("email_verified"):
+                return []
+            return workspace_directory.workspaces_for_email(engine, identity.get("email"))
+        entries = []
+        for row in signup_store.workspaces_for(
+            subject=identity.get("subject"), email=identity.get("email")
+        ):
+            if row["status"] != "active":
+                continue
+            origin = _dedicated_origin(row["slug"])
+            entries.append({
+                "name": row["slug"], "slug": row["slug"],
+                "host": urlsplit(origin).hostname or "", "origin": origin,
+                "status": "active", "role": row.get("role"),
+            })
+        return entries
+
+    def _origin_for_slug(slug: str) -> str | None:
+        """Where a sign-up slug's workspace lives, or None when it has no reachable host."""
+        if _shared_directory():
+            found = workspace_directory.workspace_for_slug(engine, slug)
+            return found["origin"] if found else None
+        return _dedicated_origin(slug)
+
+    def _unknown_workspace(request: Request, target: str | None) -> Response | None:
+        """A page for a tenant target that names no workspace, before Google runs.
+
+        Only where the answer is known: the shared tier, whose control plane
+        sees every pinned host. A dedicated control plane cannot tell, so it
+        keeps sending the person on and lets the tenant decide.
+        """
+        if target is None or not _shared_directory():
+            return None
+        host = (urlsplit(target).hostname or "").lower()
+        if host and host in host_map.hosts():
+            return None
+        _security_log.info("auth.unknown_workspace host=%s", host or "-")
+        return HTMLResponse(
+            signin_pages.unknown_workspace_page(host=host, sign_in_url="/signin"),
+            status_code=404,
+            headers={"cache-control": "no-store"},
+        )
+
+    def _org_redirect(request: Request, org_id: str | None) -> str | None:
+        """Where the browser must go to use ``org_id``, when it is not this host.
+
+        Shared tier only. A workspace session is a host-only cookie, and a pinned
+        host accepts only its own organization; an enterprise workspace (one with
+        a ``vanity_host``) is used on that host, never on the apex. Returns the
+        URL that starts the Google handoff for that host (a full navigation), or
+        None when this host is the right one.
+        """
+        if not org_id or not host_map.canonical:
+            return None
+        pinned = tenant_hosts.required_org(request.scope)
+        if pinned == org_id:
+            return None
+        found = None
+        with tenant_context.system(), engine.connect() as conn:
+            vanity = conn.execute(
+                select(organization.c.vanity_host).where(organization.c.id == org_id)
+            ).scalar_one_or_none()
+        if vanity:
+            found = workspace_directory.origin_for_host(vanity)
+        if found is None:
+            if not pinned:
+                return None  # an apex workspace on the apex: nothing to move
+            return f"https://{host_map.canonical}/"
+        if signup_config.control_plane_url and identity_transfer.tenant_target(found):
+            return _handoff_start_url(found)
+        return found
 
     def _handoff_start_url(origin: str, *, ask_account: bool = False) -> str:
         """Start the handoff for a specific workspace.
@@ -2310,6 +2894,17 @@ def create_app(
                 page, status_code=400, headers={"cache-control": "no-store"}
             )
         host = urlsplit(target).hostname or ""
+        if _shared_directory() and host not in host_map.hosts():
+            return HTMLResponse(
+                signin_pages.no_workspace_page(
+                    email=(identity or {}).get("email"),
+                    sign_out_url=_signout_action(request),
+                    invite_action="/signin/invited",
+                    invite_error=f"There's no workspace at {host}. Check the link in your email.",
+                ),
+                status_code=404,
+                headers={"cache-control": "no-store"},
+            )
         _security_log.info("auth.invited_link host=%s", host)
         return RedirectResponse(
             f"https://{host}/?invite={quote(code, safe='')}", status_code=303
@@ -2399,21 +2994,22 @@ def create_app(
             )
 
         next_target = _tenant_transfer_target(request.query_params.get("next") or "")
+        unknown = _unknown_workspace(request, next_target)
+        if unknown is not None:
+            return unknown
         identity = _signup_identity(request)
         # True only after a sign-out or a "use a different account" link. Every
         # other visit is a resume: the identity is already verified, and sending
         # it through Google again is the extra hop this entry used to add.
         ask_account = _account_choice_pending(request)
         if identity is not None:
-            rows = signup_store.workspaces_for(
-                subject=identity.get("subject"), email=identity.get("email")
-            )
-            active = [row for row in rows if row["status"] == "active"]
+            # Invitations count: a pending invitation is a workspace this address
+            # can open (its membership row already exists), and it is the one
+            # place a newly invited person can be.
+            active = _directory(identity)
             # The person named a workspace; the directory is a fallback for an
             # entry reached without one, never an override of their choice.
-            target = next_target or (
-                _workspace_origin(active[0]["slug"]) if len(active) == 1 else None
-            )
+            target = next_target or (active[0]["origin"] if len(active) == 1 else None)
             if target is not None:
                 if ask_account:
                     response = RedirectResponse(
@@ -2434,12 +3030,12 @@ def create_app(
                 return HTMLResponse(
                     signin_pages.choose_workspace_page(
                         workspaces=[
-                            (
-                                row["slug"],
-                                _handoff_start_url(
-                                    _workspace_origin(row["slug"]), ask_account=ask_account
-                                ),
-                            )
+                            {
+                                "name": row["name"],
+                                "host": row["host"],
+                                "status": row["status"],
+                                "url": _handoff_start_url(row["origin"], ask_account=ask_account),
+                            }
                             for row in active
                         ],
                         email=identity.get("email"),
@@ -2508,6 +3104,9 @@ def create_app(
                     path="/",
                 )
             return response
+        unknown = _unknown_workspace(request, tenant_target)
+        if unknown is not None:
+            return unknown
         choose_account = request.query_params.get("choose_account") == "1"
         # Asking for the chooser is only worth anything if this deployment can
         # start a Google flow. Where it cannot, refusing to resume the control
@@ -2573,10 +3172,9 @@ def create_app(
 
     async def google_sign_in_callback(request: Request):
         if not signup_config.configured:
-            return JSONResponse(
-                {"error": "Sign-up is not configured on this deployment.",
-                 "reason": "signup_unconfigured"},
-                status_code=503,
+            return _signin_failure(
+                request, error="Sign-up is not configured on this deployment.",
+                reason="signup_unconfigured", status_code=503,
             )
         flow, flow_reason = signup_store.consume_flow(
             state=request.query_params.get("state") or "",
@@ -2584,28 +3182,30 @@ def create_app(
         )
         if flow is None:
             # Generic message: a caller learns that it failed, not which check.
-            return JSONResponse(
-                {"error": "This sign-in attempt is invalid or has expired.",
-                 "reason": flow_reason},
-                status_code=400,
+            # The page says "start again", because none of these is a decision
+            # about the person: a stale tab, a reused link, an expired attempt.
+            return _signin_failure(
+                request, error="This sign-in attempt is invalid or has expired.",
+                reason=flow_reason, status_code=400, retry_url="/signin",
             )
+        flow_target = _tenant_transfer_target(flow["return_to"])
+        # Start over for the same destination: the workspace this flow was for,
+        # or the local page it would have returned to.
+        retry_url = "/auth/google/start?return_to=" + quote(
+            flow["return_to"] or "/signin", safe="")
+        flow_host = urlsplit(flow_target).hostname if flow_target else None
+
+        def _failed(error: str, reason: str) -> Response:
+            return _signin_failure(request, error=error, reason=reason, status_code=400,
+                                   host=flow_host, retry_url=retry_url)
+
         if request.query_params.get("error"):
-            return JSONResponse(
-                {"error": "Google refused the sign-in.", "reason": "provider_error"},
-                status_code=400,
-            )
+            return _failed("Google refused the sign-in.", "provider_error")
         code = request.query_params.get("code") or ""
         if not code:
-            return JSONResponse(
-                {"error": "Missing authorization code.", "reason": "code_missing"},
-                status_code=400,
-            )
+            return _failed("Missing authorization code.", "code_missing")
         if flow["redirect_uri"] not in signup_config.redirect_uris:
-            return JSONResponse(
-                {"error": "Redirect URI is not allow-listed.",
-                 "reason": "redirect_uri_not_allowed"},
-                status_code=400,
-            )
+            return _failed("Redirect URI is not allow-listed.", "redirect_uri_not_allowed")
         try:
             tokens = await run_in_threadpool(
                 google_oidc.exchange_code,
@@ -2640,10 +3240,7 @@ def create_app(
             if not isinstance(email, str) or not email.strip():
                 raise google_oidc.OIDCError("claim_missing", "ID token has no email.")
         except google_oidc.OIDCError as exc:
-            return JSONResponse(
-                {"error": "Google sign-in could not be verified.", "reason": exc.reason},
-                status_code=400,
-            )
+            return _failed("Google sign-in could not be verified.", exc.reason)
         tenant_target = _tenant_transfer_target(flow["return_to"])
         if tenant_target is not None:
             # This origin is the control plane for a tenant sign-in. The address
@@ -2658,6 +3255,7 @@ def create_app(
                 picture=claims.get("picture"),
                 tenant_target=tenant_target,
                 source="google_callback",
+                request=request,
             )
 
         identity = signup_store.upsert_identity(
@@ -2694,10 +3292,9 @@ def create_app(
         if pinned_org and signup_config.identity_transfer_master:
             transfer_key = identity_transfer.tenant_key(signup_config.identity_transfer_master, host)
         if not transfer_key:
-            return JSONResponse(
-                {"error": "Sign-in is not configured on this workspace.",
-                 "reason": "transfer_unconfigured"},
-                status_code=503,
+            return _signin_failure(
+                request, error="Sign-in is not configured on this workspace.",
+                reason="transfer_unconfigured", status_code=503, host=host,
             )
         try:
             claims = identity_transfer.redeem(
@@ -2729,15 +3326,19 @@ def create_app(
                     )
         except Exception:
             _security_log.exception("sign-in resolve failed host=%s", host)
-            return JSONResponse(
-                {"error": "Sign-in could not be completed.", "reason": "resolve_failed"},
-                status_code=500,
+            return _signin_failure(
+                request, error="Sign-in could not be completed.",
+                reason="resolve_failed", status_code=500, host=host,
             )
         _security_log.info(
             "auth.finish host=%s action=%s", host, resolved["action"]
         )
-        _announce_member(request, claims.get("email") or "")
+        pending_invite = _invite_code(request.cookies.get(_INVITE_COOKIE))
         if resolved["action"] == google_login.ACTION_DENIED:
+            mismatch = _invite_mismatch(
+                request, pinned_org, pending_invite, resolved.get("reason"), claims, host)
+            if mismatch is not None:
+                return mismatch
             return _signin_failure(
                 request,
                 error="This Google account is not a member of this workspace.",
@@ -2777,14 +3378,13 @@ def create_app(
             resolved["identity_id"], resolved["user_id"], resolved["organization_id"]
         )
         if not session_token:
-            return JSONResponse(
-                {"error": "Sign-in could not be completed.", "reason": "session_failed"},
-                status_code=500,
+            return _signin_failure(
+                request, error="Sign-in could not be completed.",
+                reason="session_failed", status_code=500, host=host,
             )
         # An invitation in flight outranks the generic landing: the person did
         # not come here to browse, they came to accept, and the SPA only reads
         # the code from the URL. The cookie is single-use.
-        pending_invite = _invite_code(request.cookies.get(_INVITE_COOKIE))
         landing = (
             f"/?invite={quote(pending_invite, safe='')}"
             if pending_invite
@@ -2799,7 +3399,52 @@ def create_app(
         )
         if pending_invite:
             response.delete_cookie(_INVITE_COOKIE, path="/")
+        # Only now is the membership proven: a refused sign-in announces nothing.
+        response.background = _announce_member(request, claims.get("email") or "")
         return response
+
+    def _invite_mismatch(
+        request: Request,
+        pinned_org: str | None,
+        code: str | None,
+        reason: str | None,
+        claims: dict,
+        host: str,
+    ) -> Response | None:
+        """A refusal that holds a valid invitation for this workspace, for another address.
+
+        Without this the person saw "not invited" while holding the invitation.
+        The address the invitation went to is shown masked: holding the code
+        already tells them the workspace, and a masked address tells them which
+        Google account to pick without handing a full address to whoever has
+        the link. Whether a different address may redeem it at all is decided by
+        ``invite_policy.invite_redemption_allowed`` alone.
+        """
+        if not pinned_org or not code or reason not in ("not_invited", "profile_not_found"):
+            return None
+        with tenant_context.system():
+            invite = store.pending_invitation(code)
+        if invite is None or invite["organization_id"] != pinned_org:
+            return None
+        verified = claims.get("email") or ""
+        policy = _org_security_policy(pinned_org)
+        if invite_policy.invite_redemption_allowed(invite["email"], verified, policy):
+            # Same mailbox: membership resolution would have admitted it, so a
+            # refusal here is about something else and keeps its own reason.
+            return None
+        back = _tenant_origin_for(request) or f"https://{host}/"
+        retry_target = f"{back.rstrip('/')}/?invite={quote(code, safe='')}"
+        invited_url = _handoff_start_url(retry_target, ask_account=True)
+        return _signin_failure(
+            request,
+            error="This invitation was sent to a different address.",
+            reason=invite_policy.MISMATCH,
+            status_code=403,
+            host=host,
+            email=verified,
+            invited_hint=invite_policy.mask(invite["email"]),
+            invited_url=invited_url,
+        )
 
     def _signup_workspace_payload(row: dict) -> dict:
         """One requester's own workspace/request state, safe for the page."""
@@ -2808,8 +3453,10 @@ def create_app(
         workspace_url = None
         sign_in_url = None
         if status == "active":
-            workspace_url = f"https://{slug}.{signup_config.tenant_base_domain}"
-            sign_in_url = f"{workspace_url}/auth/google/start?return_to=%2F"
+            origin = _origin_for_slug(slug)
+            if origin:
+                workspace_url = origin.rstrip("/")
+                sign_in_url = f"{workspace_url}/auth/google/start?return_to=%2F"
             message = "Your workspace is ready."
         elif status == "provisioning":
             message = "Your workspace is being created."
@@ -2836,6 +3483,19 @@ def create_app(
             }
             if identity is not None:
                 row = signup_store.latest_eligibility_for_identity(identity["identity_id"])
+                # Workspaces this person can already open, so the page offers
+                # "Open <workspace>" before it offers to create another one.
+                payload["workspaces"] = [
+                    {
+                        "name": entry["name"],
+                        "host": entry["host"],
+                        "workspaceUrl": entry["origin"].rstrip("/"),
+                        "signInUrl": _handoff_start_url(entry["origin"]),
+                        "status": entry["status"],
+                        "role": entry.get("role"),
+                    }
+                    for entry in _directory(identity)
+                ]
                 if row is not None:
                     payload["workspace"] = _signup_workspace_payload(row)
             return JSONResponse(payload, headers={"cache-control": "no-store"})
@@ -2911,7 +3571,7 @@ def create_app(
     async def upload_create(request: Request):
         uid, org, _identity_id, _browser_session = _auth(request)
         if not uid:
-            return JSONResponse({"error": "Authentication required"}, status_code=401)
+            return _auth_required(request)
         csrf = _cookie_csrf_error(request, json_only=False)
         if csrf:
             return csrf
@@ -2938,7 +3598,7 @@ def create_app(
     async def upload_serve(request: Request):
         uid, org, _identity_id, _browser_session = _auth(request)
         if not uid:
-            return JSONResponse({"error": "Authentication required"}, status_code=401)
+            return _auth_required(request)
         # The URL carries the extension (`<id>.png`); the id itself is the part before it.
         file_id = uploads.blob_id_from_segment(request.path_params.get("file_id", ""))
         if not file_id:
@@ -2983,7 +3643,7 @@ def create_app(
         if uid:  # resolved in a worker thread: its context copy is gone, bind here
             tenant_context.enter(org, uid, getattr(request.state, "actor_kind", "human"))
         if not uid:
-            return JSONResponse({"error": "Authentication required"}, status_code=401)
+            return _auth_required(request)
         try:
             closed_days = int(request.query_params.get("closedDays", sync.DEFAULT_CLOSED_DAYS))
         except ValueError:
@@ -3059,7 +3719,7 @@ def create_app(
         if uid:  # resolved in a worker thread: its context copy is gone, bind here
             tenant_context.enter(org, uid, getattr(request.state, "actor_kind", "human"))
         if not uid:
-            return JSONResponse({"error": "Authentication required"}, status_code=401)
+            return _auth_required(request)
         try:
             after = int(request.query_params.get("after", ""))
         except ValueError:
@@ -3264,7 +3924,8 @@ def create_app(
         from hoja_server.mcp_oauth import HojaOAuthProvider, build_server
 
         runtime_server = build_server(
-            HojaOAuthProvider(engine, store, trusted_proxy=trust_proxy, public_host=public_host),
+            HojaOAuthProvider(engine, store, trusted_proxy=trust_proxy, public_host=public_host,
+                              workspace_host=host_map.host_for),
             public_host=public_host,
         )
         runtime_app = runtime_server.streamable_http_app(
@@ -3444,6 +4105,7 @@ def create_app(
             # spec-following clients POST to exactly that URL. Mount("/mcp") only
             # matches /mcp/..., so the bare path fell through to the SPA fallback
             # (POST 405, GET returned the web page). Serve it as the mount would.
+            Route("/device", device_page, methods=["GET", "POST"]),
             Route("/mcp", _BareMount(mcp_endpoint, "/mcp")),
             Mount("/mcp", app=mcp_endpoint),
             Route("/", web_index, methods=["GET"]),

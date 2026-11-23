@@ -11,8 +11,36 @@ hoja me                          # human-friendly card
 hoja -o json me                  # JSON for piping
 ```
 
+### `hoja auth login`
+Sign in through the browser and store a refreshable token for the workspace.
+Accepts `acme.example.com`, `https://acme.example.com` or the `/graphql` URL;
+without an argument it reuses the current account's workspace. Falls back to a
+device code when no browser is available (SSH, no display) or with `--device`.
+```bash
+hoja auth login acme.example.com
+hoja auth login acme.example.com --device --read-only --name acme-ro
+```
+
+### `hoja auth logout`
+Revoke the sign-in at the server and delete the local tokens. The account entry
+stays, so `hoja auth login` signs back in to the same workspace.
+```bash
+hoja auth logout            # current account
+hoja auth logout acme
+```
+
+### `hoja auth token`
+Print a fresh access token for the current account. With `--json`, stdout is a
+single JSON object: `access_token`, `token_type`, `expires_at`, `api_url`,
+`mcp_url`, `workspace`, `account`, `source`. Never echo the token itself.
+```bash
+hoja auth token --json
+```
+
 ### `hoja auth status`
-Print which token source resolved (env var, config file, --token flag).
+Show the active account, credential source (`--token`, an environment variable,
+the stored sign-in, or a config-file key), workspace, user, scopes and expiry,
+then the viewer.
 ```bash
 hoja auth status
 ```
@@ -25,7 +53,7 @@ hoja -o json auth accounts      # structured for agent reasoning
 ```
 
 ### `hoja auth add`
-Add a named account. Optionally verifies the token against the upstream API to populate `org_name`. Use `--teams` to declare which team keys the account owns (enables automatic account selection) and `--default` to make it the global default.
+Add a named account that uses an API key (for automation; people should prefer `hoja auth login`). Optionally verifies the token against the upstream API to populate `org_name`. Use `--teams` to declare which team keys the account owns (enables automatic account selection) and `--default` to make it the global default.
 ```bash
 hoja auth add work --token $LINEAR_WORK_TOKEN --teams "ENG,OPS" --default
 hoja auth add personal --token $LINEAR_PERSONAL_TOKEN --token-env LINEAR_PERSONAL_TOKEN

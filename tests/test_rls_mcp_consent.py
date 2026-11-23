@@ -1,9 +1,10 @@
-"""The MCP consent screen must resolve an OAuth bearer under row-level security.
+"""The MCP consent screen under row-level security.
 
-``_mcp_oauth_auth`` runs before any tenant is known, so its credential lookup is a
-cross-tenant read. Read outside ``system()`` it matches nothing once the app runs
-as the restricted role, consent falls back to the API-key branch (which cannot
-resolve an OAuth token), and the page degrades to a login redirect.
+Consent is approved by a person at a browser: only the Hoja session cookie
+counts. A bearer (OAuth access token or API key) used to be accepted here, which
+let a read-only key approve hoja:write; it is now refused. The session lookup and
+the pending-request claim still run before and across tenant binding, so they
+are exercised here under the restricted role.
 """
 from __future__ import annotations
 
@@ -65,23 +66,46 @@ def _pending(owner, org_id=None) -> tuple[str, str]:
     return pending_id, csrf
 
 
-def test_oauth_bearer_resolves_the_consent_screen_under_rls(consent_app):
+def _browser_session(consent_app) -> str:
+    alpha = consent_app["alpha"]
+    from sqlalchemy import select
+
+    with consent_app["owner"].connect() as conn:
+        identity = conn.execute(select(db.organization_membership.c.identity_id).where(
+            db.organization_membership.c.organization_id == alpha["org_id"])).scalar_one()
+    raw, _ = Store(consent_app["owner"]).create_session_for_membership(identity, alpha["user_id"], alpha["org_id"])
+    return raw
+
+
+def test_an_oauth_bearer_cannot_open_or_approve_consent(consent_app):
+    pending_id, csrf = _pending(consent_app["owner"])
+    auth = {"Authorization": f"Bearer {consent_app['access']}"}
+    resp = consent_app["client"].get(f"/mcp/oauth/consent?pending={pending_id}", headers=auth,
+                                     follow_redirects=False)
+    assert resp.status_code == 303 and "/auth/login" in resp.headers["location"]
+    posted = consent_app["client"].post(f"/mcp/oauth/consent?pending={pending_id}", headers=auth,
+                                        data={"decision": "allow", "csrf_token": csrf},
+                                        follow_redirects=False)
+    assert posted.status_code == 401
+
+
+def test_a_browser_session_resolves_the_consent_screen_under_rls(consent_app):
     pending_id, _csrf = _pending(consent_app["owner"])
     resp = consent_app["client"].get(
         f"/mcp/oauth/consent?pending={pending_id}",
-        headers={"Authorization": f"Bearer {consent_app['access']}"},
+        cookies={"hoja_session": _browser_session(consent_app)},
         follow_redirects=False,
     )
     assert resp.status_code == 200, (resp.status_code, resp.headers.get("location"), resp.text)
-    assert "Authorize MCP client" in resp.text
+    assert "Allow consent-client" in resp.text
     assert "Alpha" in resp.text
 
 
-def test_consent_claims_the_pending_request_for_the_bearer_workspace(consent_app):
+def test_consent_claims_the_pending_request_for_the_session_workspace(consent_app):
     pending_id, _csrf = _pending(consent_app["owner"])
     resp = consent_app["client"].get(
         f"/mcp/oauth/consent?pending={pending_id}",
-        headers={"Authorization": f"Bearer {consent_app['access']}"},
+        cookies={"hoja_session": _browser_session(consent_app)},
         follow_redirects=False,
     )
     assert resp.status_code == 200, (resp.status_code, resp.text)
@@ -101,4 +125,4 @@ def test_an_unknown_bearer_still_degrades_to_login(consent_app):
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert resp.headers["location"].startswith("/auth/login")
+    assert resp.headers["location"].startswith("/auth/login?next=")

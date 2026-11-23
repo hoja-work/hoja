@@ -113,9 +113,14 @@ def test_oauth_refresh_replay_revokes_family_and_persists_resource(tmp_path) -> 
     assert latest_access.resource == resource
     assert rotated_refresh.resource == resource
 
+    # Within the grace window the rotated token is honoured once (a client that
+    # lost the response retries); a second reuse is a replay of the family.
+    retried = asyncio.run(provider.exchange_refresh_token(client, original, []))
+    assert retried.access_token != rotated.access_token
     with pytest.raises(TokenError):
         asyncio.run(provider.exchange_refresh_token(client, original, []))
     assert asyncio.run(provider.load_access_token(rotated.access_token)) is None
+    assert asyncio.run(provider.load_access_token(retried.access_token)) is None
     assert asyncio.run(provider.load_refresh_token(client, rotated.refresh_token)) is None
     with engine.connect() as conn:
         rows = conn.execute(select(db.oauth_access_token).where(db.oauth_access_token.c.grant_id == minted_refresh["grant_id"])).mappings().all()
@@ -302,9 +307,9 @@ def test_mcp_oauth_http_authorization_code_pkce_flow(tmp_path, monkeypatch) -> N
         consent_path = urlparse(consent_url).path + "?" + urlparse(consent_url).query
         consent = client.get(consent_path, headers={"host": "mcp.example.test"})
         assert consent.status_code == 200
-        assert "Authorize MCP client" in consent.text
+        assert "Allow " in consent.text and "to use Hoja?" in consent.text
         import re
-        csrf = re.search(r'name=csrf_token value="([^"]+)"', consent.text).group(1)
+        csrf = re.search(r'name="csrf_token" value="([^"]+)"', consent.text).group(1)
         denied = client.post(consent_path, data={"decision": "allow", "csrf_token": "wrong"},
                              headers={"host": "mcp.example.test"})
         assert denied.status_code == 400
@@ -372,8 +377,10 @@ def test_mcp_streamable_http_lifecycle_and_host_validation(tmp_path) -> None:
         assert called.status_code == 200, called.text
         assert not called.json()["result"].get("isError"), called.json()
         denied = client.post("/mcp/", headers={**session_headers, "Mcp-Method": "tools/call", "Mcp-Name": "hoja_teamCreate"}, json={**base, "id": 4, "method": "tools/call", "params": {**envelope, "name": "hoja_teamCreate", "arguments": {"name": "No"}}})
-        assert denied.status_code == 200 and denied.json()["result"].get("isError")
-        assert "hoja:write" in denied.json()["result"]["content"][0]["text"], denied.json()
+        # A read-only token calling a write tool is challenged for hoja:write.
+        assert denied.status_code == 403
+        assert 'error="insufficient_scope"' in denied.headers["www-authenticate"]
+        assert "hoja:write" in denied.headers["www-authenticate"]
         wrong_host = client.post("/mcp/", headers={**session_headers, "Host": "attacker.invalid"}, json={**base, "id": 5, "method": "tools/list", "params": envelope})
         assert wrong_host.status_code == 421
 

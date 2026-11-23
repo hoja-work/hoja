@@ -77,6 +77,8 @@ SDL = gql(
       ipAllowlist: [String!]!
       "Whether Hoja Connect may open tunnels for this workspace (WP09). True until an admin says otherwise."
       connectEnabled: Boolean!
+      "Which OAuth apps members may approve: all (default) or first_party (Hoja's own apps only)."
+      oauthClients: String!
       updatedAt: DateTime
     }
 
@@ -86,6 +88,8 @@ SDL = gql(
       ipAllowlist: [String!]
       "The workspace-wide Connect kill switch. Omit to leave it as it is."
       connectEnabled: Boolean
+      "all | first_party. Omit to leave it as it is."
+      oauthClients: String
     }
 
     "Workspace-wide switches every member reads, because they decide what the app shows."
@@ -208,6 +212,7 @@ def security_policy(engine, org_id: str) -> dict:
             # Revision 71: "no row" and NULL both mean "never decided", which is enabled. A
             # workspace that has not turned Connect off keeps it on.
             "connectEnabled": True,
+            "oauthClients": "all",
             "updatedAt": None,
         }
     return {
@@ -215,6 +220,7 @@ def security_policy(engine, org_id: str) -> dict:
         "allowedSigninMethods": json.loads(row["allowed_signin_methods"] or "[]"),
         "ipAllowlist": json.loads(row["ip_allowlist"] or "[]"),
         "connectEnabled": row.get("connect_enabled") is not False,
+        "oauthClients": "first_party" if row.get("oauth_clients") == "first_party" else "all",
         "updatedAt": row["updated_at"],
     }
 
@@ -380,6 +386,14 @@ def m_workspace_security_update(_, info, input):
     # Connect back on for a workspace whose admin turned it off.
     if input.get("connectEnabled") is not None:
         values["connect_enabled"] = bool(input["connectEnabled"])
+    # Same rule: written only when sent.
+    if input.get("oauthClients") is not None:
+        if input["oauthClients"] not in ("all", "first_party"):
+            raise GraphQLError(
+                "oauthClients must be all or first_party.",
+                extensions={"code": "BAD_USER_INPUT", "field": "oauthClients"},
+            )
+        values["oauth_clients"] = input["oauthClients"]
     with store.engine.begin() as conn:
         updated = conn.execute(
             workspace_security_policy.update()

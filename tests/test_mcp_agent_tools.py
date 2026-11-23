@@ -227,9 +227,38 @@ def test_errors_are_specific_and_actionable(hoja) -> None:
     assert not ok and "No team matches 'NOPE'" in err and "ENG" in err
 
 
-def test_read_only_grant_explains_missing_write_scope(hoja) -> None:
+def test_read_only_grant_gets_an_insufficient_scope_challenge(hoja) -> None:
+    """MCP authorization, scope challenge: 403 + WWW-Authenticate before the tool runs.
+
+    The client then re-authorizes for the scopes named in the challenge, which is
+    what turns "reconnect with write access" into something a client can do.
+    """
     mcp = hoja((READ_SCOPE,))
-    ok, err = mcp.call("hoja_issueCreate", teamId="ENG", title="nope")
-    assert not ok and "read-only" in err and WRITE_SCOPE in err
+    resp = mcp.client.post("/mcp/", headers={**mcp.headers, "MCP-Protocol-Version": mcp.version}, json={
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {**mcp.envelope, "name": "hoja_issueCreate", "arguments": {"teamId": "ENG", "title": "nope"}}})
+    assert resp.status_code == 403, resp.text
+    challenge = resp.headers["www-authenticate"]
+    assert challenge.startswith("Bearer ") and 'error="insufficient_scope"' in challenge
+    assert f'scope="{READ_SCOPE} {WRITE_SCOPE}"' in challenge
+    assert f'resource_metadata="https://{HOST}/.well-known/oauth-protected-resource/mcp"' in challenge
     ok, teams = mcp.call("hoja_teams")
     assert ok, teams
+
+
+def test_read_only_api_key_explains_how_to_get_write(tmp_path) -> None:
+    """An API key cannot step up through OAuth, so the tool error says what to do instead."""
+    path = tmp_path / "ro-key.db"
+    engine = make_engine(path)
+    migrate(engine)
+    seed = seed_tenant(engine, org_name="Keys", org_url_key="keys", team_key="ENG",
+                       user_email="k@example.test", demo_issues=False)
+    with engine.begin() as conn:
+        conn.execute(db.api_key.insert().values(
+            id="ro", token_hash=db.token_hash("read-only-key-token"), label="ro", access="read",
+            user_id=seed["user_id"], organization_id=seed["org_id"], created_at=now_iso()))
+    app = create_app(db_path=str(path), trusted_proxy_cidrs="127.0.0.1/32", trusted_public_host=HOST)
+    with TestClient(app, base_url=f"https://{HOST}", client=("127.0.0.1", 44321)) as client:
+        mcp = Mcp(client, "read-only-key-token")
+        ok, err = mcp.call("hoja_issueCreate", teamId="ENG", title="nope")
+    assert not ok and "API key is read-only" in err and "read-write key" in err

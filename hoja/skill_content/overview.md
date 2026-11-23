@@ -40,7 +40,8 @@ Use `hoja` via the **Bash tool** whenever a task touches the upstream API:
 
 ```
 hoja me                          # current user
-hoja auth status                 # who am I authed as?
+hoja auth login <WORKSPACE>      # browser sign-in (people); API keys are for automation
+hoja auth status                 # who am I authed as, and with which credential?
 hoja auth accounts               # list all accounts
 hoja auth add <NAME> --token <T>  # add an account
 hoja auth switch <NAME>           # set default

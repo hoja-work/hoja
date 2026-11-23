@@ -72,7 +72,7 @@ import {
 } from "lucide-react";
 import { MorphIcon } from "morphicons/react";
 import { layoutIcon, listIcon } from "./icons";
-import { ApiKeysSettings } from "./ApiKeysSettings";
+import { ConnectedAppsSettings } from "./ConnectedAppsSettings";
 import { ExtensionsSettings } from "./ExtensionsSettings";
 import { connectRealtime, onRealtimeFrame } from "./realtime";
 import {
@@ -382,13 +382,14 @@ export function storedApiToken(): string | null {
   const t = localStorage.getItem("hoja_token");
   return t && t !== "session" ? t : null;
 }
-// MCP OAuth consent sends a signed-out browser to /auth/login?next=/mcp/oauth/consent?pending=…
+// MCP OAuth consent (and the /device page) send a signed-out browser to /auth/login?next=/mcp/oauth/consent?pending=…
 // Remember that one path across sign-in (password, Google, or the tenant handoff that returns to /)
-// and resume it once a session exists. Only the consent page is accepted: anything broader is an open redirect.
+// and resume it once a session exists. Only those approval pages are accepted: anything broader is an open redirect.
 const CONSENT_RETURN_KEY = "hoja_consent_return";
 function consentReturnPath(value: string | null): string | null {
   return value &&
-    /^\/mcp\/oauth\/consent\?pending=[A-Za-z0-9_-]{16,200}$/.test(value)
+    (/^\/mcp\/oauth\/consent\?pending=[A-Za-z0-9_-]{16,200}$/.test(value) ||
+      /^\/device(\?user_code=[A-Z]{4}-[A-Z]{4})?$/.test(value))
     ? value
     : null;
 }
@@ -1398,7 +1399,17 @@ function App() {
   useEffect(() => {
     Promise.all([
       fetch("/onboarding/status").then((r) => r.json()),
-      fetch("/auth/me", { credentials: "include" }).then((r) => r.ok),
+      fetch("/auth/me", { credentials: "include" }).then(async (r) => {
+        // A workspace with its own address is opened there, never on this host.
+        if (r.status === 409) {
+          const body = await r.json().catch(() => null);
+          if (body?.redirectUrl) {
+            window.location.replace(body.redirectUrl);
+            return false;
+          }
+        }
+        return r.ok;
+      }),
       fetch("/api/signup/config").then((r) => (r.ok ? r.json() : null)),
     ])
       .then(([v, session, config]) => {
@@ -1715,10 +1726,16 @@ function App() {
     let switched = false;
     try {
       const d = await gql(
-        `mutation($id:String!){workspaceSwitch(organizationId:$id){success organization{id name urlKey}}}`,
+        `mutation($id:String!){workspaceSwitch(organizationId:$id){success redirectUrl organization{id name urlKey}}}`,
         { id },
       );
       if (!d.workspaceSwitch.success) throw Error("Workspace switch denied");
+      if (d.workspaceSwitch.redirectUrl) {
+        // That workspace lives on its own address: this host's session stays
+        // as it is, and the browser signs in there instead.
+        window.location.assign(d.workspaceSwitch.redirectUrl);
+        return;
+      }
       switched = true;
       localStorage.removeItem("hoja_saved_views_" + workspace.id);
       setWorkspace(d.workspaceSwitch.organization);
@@ -2740,11 +2757,15 @@ function App() {
       <CreateWorkspacePage
         onCreated={async (w) => {
           const switched = await gql(
-            `mutation($id:String!){workspaceSwitch(organizationId:$id){success organization{id name urlKey}}}`,
+            `mutation($id:String!){workspaceSwitch(organizationId:$id){success redirectUrl organization{id name urlKey}}}`,
             { id: w.id },
           );
           if (!switched.workspaceSwitch?.success)
             throw Error("Workspace created, but could not switch into it");
+          if (switched.workspaceSwitch.redirectUrl) {
+            window.location.assign(switched.workspaceSwitch.redirectUrl);
+            return;
+          }
           history.pushState({}, "", `/workspace/inbox`);
           setWorkspace(switched.workspaceSwitch.organization || w);
           setView("Inbox");
@@ -7578,6 +7599,10 @@ function WorkspaceChooser({
       });
       const b = await r.json();
       if (!r.ok) throw Error(b.error || "Could not open this workspace");
+      if (b.redirectUrl) {
+        window.location.assign(b.redirectUrl);
+        return;
+      }
       onLogin();
     } catch (err) {
       setError((err as Error).message);
@@ -7731,6 +7756,11 @@ function Login({
         return;
       }
       if (!r.ok) throw Error(b.error || "Sign in failed");
+      if (b.redirectUrl) {
+        // An enterprise workspace is opened on its own address.
+        window.location.assign(b.redirectUrl);
+        return;
+      }
       onLogin("session");
     } catch (err) {
       setAuthError((err as Error).message);
@@ -12059,12 +12089,6 @@ function CommandPalette({
  * label -> the noun the unavailable pane prints. */
 const SETTINGS_UNAVAILABLE: [string, string, string, string][] = [
   [
-    "mcp-connectors",
-    "MCP connectors",
-    "MCP OAuth exists for the agent, but no stored connector registry a workspace can manage.",
-    "HOJA-494",
-  ],
-  [
     "import-export",
     "Import & export",
     "No importer/exporter endpoints exist; the CLI is the only bulk path.",
@@ -12115,7 +12139,7 @@ function SettingsSidebar({
         ["preferences", "Preferences", SlidersHorizontal],
         ["profile", "Profile", UserRound],
         ["notifications", "Notifications", Bell],
-        ["api-keys", "API keys", KeyRound],
+        ["api-keys", "Connected apps", KeyRound],
         ["agent-conversations", "Agent conversations", MessageCircle],
         ["connections", "Connections", Plug],
       ],
@@ -12577,14 +12601,14 @@ function LegacyWorkspaceSettings({
         </span>
         <h1 className="mt-0 mr-0 mb-2 ml-0 text-(--settings-ink) text-(length:--ds-settings-title-size) font-(--ds-settings-title-weight) leading-(--ds-settings-title-line) tracking-[-.035em] [@media_(max-width:_700px)]:text-(length:--ds-settings-title-size)">
           {section === "api-keys"
-            ? "API keys"
+            ? "Connected apps"
             : section === "workspace"
               ? "Workspace"
               : "Settings"}
         </h1>
         <p className="mt-0 mr-0 mb-0 ml-0 max-w-full text-[13px] leading-[1.6] text-(--settings-muted) [@media_(max-width:_700px)]:text-[13px]">
           {section === "api-keys"
-            ? "Create and manage personal credentials for the CLI, scripts, and integrations."
+            ? "Apps signed in as you, API keys for automation, and your browser sessions."
             : "Manage your workspace identity and create teams for your organization."}
         </p>
       </header>
@@ -12604,7 +12628,9 @@ function LegacyWorkspaceSettings({
           Role: {viewer.admin ? "Workspace admin" : "Member"}
         </p>
       </section>
-      {section === "api-keys" && <ApiKeysSettings />}
+      {section === "api-keys" && (
+        <ConnectedAppsSettings isAdmin={!!viewer.admin} />
+      )}
       {viewer.admin && (
         <>
           <section

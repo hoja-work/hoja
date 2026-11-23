@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -39,7 +40,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 88
+CURRENT_SCHEMA_REVISION = 89
 
 log = logging.getLogger(__name__)
 
@@ -380,6 +381,8 @@ oauth_authorization = Table(
     Column("expires_at", String, nullable=False, index=True),
     Column("consumed_at", String),
     Column("resource", Text),
+    # Revision 89: the authorized app (oauth_grant.id) this code's tokens join.
+    Column("grant_id", String),
 )
 
 oauth_pending = Table(
@@ -392,6 +395,54 @@ oauth_pending = Table(
     Column("redirect_uri", Text, nullable=False), Column("redirect_explicit", Boolean, nullable=False),
     Column("state", Text), Column("csrf_token", String, nullable=False), Column("resource", Text),
     Column("expires_at", String, nullable=False, index=True), Column("consumed_at", String),
+    # Revision 89: what the person approves is shown with the device the app
+    # named (``device_name``) and the browser that started the request.
+    Column("device_label", String), Column("user_agent", Text),
+)
+
+# Revision 89: one authorized app per (person, workspace, client, device label).
+# Its id is the ``grant_id`` every access and refresh token of that approval
+# carries, so revoking the row revokes all of them. Listed in Settings.
+oauth_grant = Table(
+    "oauth_grant",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("organization_id", String, ForeignKey("organization.id"), nullable=False, index=True),
+    Column("user_id", String, ForeignKey("user.id"), nullable=False, index=True),
+    Column("client_id", String, ForeignKey("oauth_client.client_id"), nullable=False, index=True),
+    Column("client_name", String),
+    Column("device_label", String),
+    Column("scopes", Text, nullable=False),
+    Column("user_agent", Text),
+    Column("created_at", String, nullable=False),
+    Column("updated_at", String, nullable=False),
+    Column("last_used_at", String),
+    Column("last_used_ip", String),
+    Column("revoked_at", String),
+)
+
+# Revision 89: RFC 8628 device authorization. The device code is stored only as
+# a hash; the short user code is what a person types on <origin>/device.
+oauth_device_code = Table(
+    "oauth_device_code",
+    metadata,
+    Column("device_code_hash", String, primary_key=True),
+    Column("user_code", String, nullable=False, unique=True, index=True),
+    Column("client_id", String, ForeignKey("oauth_client.client_id"), nullable=False, index=True),
+    Column("scopes", Text, nullable=False),
+    Column("resource", Text, nullable=False),
+    Column("device_label", String),
+    Column("user_agent", Text),
+    Column("csrf_token", String, nullable=False),
+    Column("interval", Integer, nullable=False),
+    Column("last_polled_at", Float),
+    Column("status", String, nullable=False),
+    Column("user_id", String, ForeignKey("user.id"), index=True),
+    Column("organization_id", String, ForeignKey("organization.id"), index=True),
+    Column("granted_scopes", Text),
+    Column("grant_id", String),
+    Column("created_at", String, nullable=False),
+    Column("expires_at", String, nullable=False, index=True),
 )
 
 oauth_access_token = Table(
@@ -1949,6 +2000,9 @@ workspace_security_policy = Table(
     # The workspace-wide Hoja Connect kill switch (revision 71, WP09). NULL reads as enabled, so a
     # workspace that never made the choice keeps the behavior it had.
     Column("connect_enabled", Boolean),
+    # Revision 89: "all" | "first_party". NULL reads as "all". With
+    # "first_party" only Hoja's own apps (the hoja-cli client) can be approved.
+    Column("oauth_clients", String),
     Column("updated_by", String, ForeignKey("user.id")),
     Column("updated_at", String),
 )
@@ -3537,6 +3591,33 @@ def _apply_tailnet(conn):
     tailnet_machine.create(conn, checkfirst=True)
 
 
+#: Hoja's own command-line client: pre-registered, public, PKCE, never via DCR.
+FIRST_PARTY_CLIENT_ID = "hoja-cli"
+
+
+def _apply_oauth_app_signin(conn):
+    """Revision 89: authorized apps, device authorization, the first-party CLI client,
+    and the workspace's oauthClients policy."""
+    oauth_grant.create(conn, checkfirst=True)
+    oauth_device_code.create(conn, checkfirst=True)
+    for table, column, sql_type in (("oauth_pending", "device_label", "VARCHAR"),
+                                    ("oauth_pending", "user_agent", "TEXT"),
+                                    ("oauth_authorization", "grant_id", "VARCHAR"),
+                                    ("workspace_security_policy", "oauth_clients", "VARCHAR")):
+        if column not in {c["name"] for c in inspect(conn).get_columns(table)}:
+            conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}")
+    exists = conn.execute(select(oauth_client.c.client_id).where(
+        oauth_client.c.client_id == FIRST_PARTY_CLIENT_ID)).first()
+    if not exists:
+        # The row anchors foreign keys; the client's real definition (redirect
+        # rules, grant types) lives in hoja_server.mcp_oauth.
+        conn.execute(oauth_client.insert().values(
+            client_id=FIRST_PARTY_CLIENT_ID, created_at=now_iso(),
+            client_json=json.dumps({"client_id": FIRST_PARTY_CLIENT_ID, "client_name": "Hoja CLI",
+                                    "redirect_uris": ["http://127.0.0.1/callback"],
+                                    "token_endpoint_auth_method": "none"})))
+
+
 def _apply_user_avatar_hue(conn):
     """``user.avatar_seed`` gets a hue: "<hue>:<token>" (revision 86).
 
@@ -3944,6 +4025,9 @@ _MIGRATIONS = {
     # 88: sub-initiatives, labels, resources, icon/colour, lead team, readable ids,
     # manual order, update reminders, and reactions and replies on updates.
     88: _apply_initiative_structure,
+    # 89: OAuth app sign-in: authorized apps, device codes, the hoja-cli client,
+    # and the workspace oauthClients policy.
+    89: _apply_oauth_app_signin,
 }
 
 

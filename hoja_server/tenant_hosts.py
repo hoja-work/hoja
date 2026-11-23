@@ -1,13 +1,26 @@
 """Which organization a request's Host belongs to, in the shared tier.
 
-Regular workspaces live on the canonical host (``HOJA_TRUSTED_PUBLIC_HOST``,
-e.g. app.hoja.work). Enterprise workspaces also get their own host, stored as
-``organization.vanity_host``: on that host only that organization's credentials
-are accepted. Any other host under the apex is redirected to the canonical one,
-so a former tenant URL of a regular workspace keeps working.
+One deployment and one database serve every workspace. The canonical host
+(``HOJA_TRUSTED_PUBLIC_HOST``, e.g. app.hoja.work) is the account and sign-in
+home: Google sign-in runs there (it is also ``HOJA_CONTROL_PLANE_URL``), and a
+workspace without a host of its own is used there.
+
+An enterprise workspace has its own host, stored as ``organization.vanity_host``
+(e.g. core.hoja.work). Requests to that host are pinned to that organization:
+only its credentials are accepted there (``required_org``), and its browser
+session is a host-only cookie minted on that host by ``/auth/google/finish``
+from a handoff the control plane signed for exactly that host. Such a workspace
+is therefore *used* on its own host; the apex sends a browser holding its
+session there instead of serving it (see ``_org_redirect`` in ``app.py``).
+
+Any other host under the apex is redirected to the canonical one, so a former
+tenant URL keeps working; a credential sent to such a host is refused (421),
+never forwarded. The connector broker host is recognised and belongs to no
+organization.
 """
 from __future__ import annotations
 
+import json
 import threading
 import time
 from typing import Any
@@ -57,6 +70,13 @@ class TenantHosts:
             self._map, self._loaded = fresh, now
         return fresh
 
+    def host_for(self, org_id: str) -> str | None:
+        """The workspace's own host, or None when it is served on the canonical host."""
+        for host, org in self.hosts().items():
+            if org == org_id:
+                return host
+        return None
+
     def decide(self, host: str | None) -> tuple[str, str | None]:
         name = bare(host)
         if self.broker and name == self.broker:
@@ -75,6 +95,50 @@ class TenantHosts:
 
 def required_org(scope: dict) -> str | None:
     return scope.get(_SCOPE_KEY)
+
+
+WRONG_WORKSPACE_HOST = "wrong_workspace_host"
+
+
+def _scope_host(scope: dict) -> str:
+    headers = dict(scope.get("headers") or [])
+    return bare(headers.get(b"host", b"").decode("latin-1"))
+
+
+def host_refusal(hosts: TenantHosts, scope: dict, org_id: str, *, credential: bool) -> dict | None:
+    """Why a valid identity of ``org_id`` may not be used on this request's host, or None.
+
+    Two rules, one answer shape. On a workspace's own host only that workspace's
+    identities count. On the canonical host, a credential (API key, OAuth or MCP
+    bearer; ``credential=True``) of a workspace that has its own host is refused:
+    such a workspace is used on its own host only. Browser sessions are not
+    judged by the second rule here; the sign-in flow owns where they live.
+
+    The answer names the identity's OWN origin. That is safe to say: only the
+    holder of a valid credential for that workspace ever sees it.
+    """
+    pinned = required_org(scope)
+    if pinned:
+        if org_id == pinned:
+            return None
+        own = hosts.host_for(org_id)
+        return {
+            "code": WRONG_WORKSPACE_HOST,
+            "reason": "pinned_host",
+            "message": "This credential belongs to another workspace, which is served at "
+                       f"https://{own or hosts.canonical}.",
+            "origin": f"https://{own or hosts.canonical}",
+        }
+    if credential and hosts.canonical and _scope_host(scope) == hosts.canonical:
+        own = hosts.host_for(org_id)
+        if own:
+            return {
+                "code": WRONG_WORKSPACE_HOST,
+                "reason": "workspace_has_own_host",
+                "message": f"This workspace is served at https://{own} and is used there only.",
+                "origin": f"https://{own}",
+            }
+    return None
 
 
 class TenantHostMiddleware:
@@ -100,9 +164,16 @@ class TenantHostMiddleware:
             if (scope.get("method") not in ("GET", "HEAD") or b"authorization" in headers
                     or path == "/mcp" or path.startswith("/mcp/")):
                 # A credential sent to the wrong host is refused, never forwarded by a redirect.
+                body = json.dumps({
+                    "error": "This host does not serve a Hoja workspace.",
+                    "reason": "not_a_workspace_host",
+                    "canonicalHost": self.hosts.canonical,
+                    "hint": f"Use https://{self.hosts.canonical} or your workspace's own address.",
+                }).encode()
                 await send({"type": "http.response.start", "status": 421,
-                            "headers": [(b"content-length", b"0")]})
-                await send({"type": "http.response.body", "body": b""})
+                            "headers": [(b"content-type", b"application/json"),
+                                        (b"content-length", str(len(body)).encode())]})
+                await send({"type": "http.response.body", "body": body})
                 return
             target = f"https://{self.hosts.canonical}{scope.get('path', '/')}"
             if scope.get("query_string"):

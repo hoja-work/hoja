@@ -48,6 +48,8 @@ ProjectUpdate = ObjectType("ProjectUpdate")
 InitiativeUpdate = ObjectType("InitiativeUpdate")
 Comment = ObjectType("Comment")
 WorkflowState = ObjectType("WorkflowState")
+Organization = ObjectType("Organization")
+Organization.set_field("origin", lambda obj, info: obj.get("origin") or info.context["store"].workspace_origin(obj["id"]))
 Cycle = ObjectType("Cycle")
 Attachment = ObjectType("Attachment")
 GithubLink = ObjectType("GithubLink")
@@ -1456,6 +1458,13 @@ def m_workspace_create(_, info, input):
         identity_id = membership.get("identity_id") if membership else None
     if not identity_id:
         raise ValueError("Workspace identity is unavailable")
+    if info.context.get("pinned_org"):
+        # A workspace with its own address accepts only its own sessions, so a
+        # workspace created from here could never be switched into on this host.
+        raise GraphQLError(
+            "Create new workspaces from the Hoja sign-up page, not from inside a workspace "
+            "that has its own address.",
+            extensions={"code": "WORKSPACE_HOST_PINNED", "field": "input"})
     created = writer.workspace_create(org, uid, input)
     created.pop("_identity_id", None)
     info.context["switch_target"] = {
@@ -1560,6 +1569,11 @@ def m_workspace_switch(_, info, organizationId):
     target = store.switch_membership(member.get("identity_id") if member else None, organizationId)
     if not target:
         return {"success": False, "organization": None}
+    # A workspace that lives on another host is opened there: the session here is
+    # a host-only cookie, and a pinned host refuses any other organization's.
+    redirect = (info.context.get("org_redirect") or (lambda _org: None))(target["organization_id"])
+    if redirect:
+        return {"success": True, "organization": target["organization"], "redirectUrl": redirect}
     info.context["switch_target"] = target
     return {"success": True, "organization": target["organization"]}
 
@@ -2056,7 +2070,7 @@ def _get_comment(store, org, cid):
 def build_schema():
     from pathlib import Path
     sdl = (Path(__file__).parent / "schema.graphql").read_text()
-    from hoja_server import decisions_api, extensions_api, model_providers, permissions, project_settings, sla, task_templates, usage_ledger, views_api, webhooks_api
+    from hoja_server import authorized_apps, decisions_api, extensions_api, model_providers, permissions, project_settings, sla, task_templates, usage_ledger, views_api, webhooks_api
     # HOJA-602-A-16 slice 5: the read-only runner/lease and claim/verdict surfaces the
     # review screens need. Both are admin-gated and org-scoped, and neither adds a table.
     from hoja_server import agent_claims, agent_runners, connect_endpoints
@@ -2091,11 +2105,12 @@ def build_schema():
          views_api.SDL, decisions_api.SDL, project_settings.SDL, permissions.SDL,
          task_templates.SDL, sla.SDL, agent_members.SDL, agent_sessions.SDL,
          agent_policy.SDL, agent_runners.SDL, agent_runner_admin.SDL,
-         agent_claims.SDL, usage_ledger.SDL, connect_endpoints.SDL, agent_ops.SDL, project_repos.SDL, tailnet_ops.SDL, initiative_api.SDL, tasks_sdl],
+         agent_claims.SDL, usage_ledger.SDL, connect_endpoints.SDL, authorized_apps.SDL, agent_ops.SDL, project_repos.SDL, tailnet_ops.SDL, initiative_api.SDL, tasks_sdl],
         query, mutation, *task_bindables,
         model_providers.query, model_providers.mutation,
         project_settings.query, project_settings.mutation,
         permissions.query, permissions.mutation,
+        authorized_apps.query, authorized_apps.mutation, authorized_apps.authorized_app_type,
         task_templates.query, task_templates.mutation,
         agent_members.query, agent_members.mutation,
         sla.query, sla.mutation,
@@ -2124,6 +2139,6 @@ def build_schema():
         usage_ledger.usage_row_type, usage_ledger.usage_event_type,
         Team, Initiative, InitiativeUpdate, Issue, IssueActivity, MyIssueActivity, Project, ProjectUpdate, Comment,
         permissions.workspace_permission_type, permissions.workspace_security_policy_type,
-        WorkflowState, Cycle, Attachment, GithubLink,
+        WorkflowState, Cycle, Attachment, GithubLink, Organization,
         datetime_scalar, timeless_scalar, json_scalar, InboxNotification,
     )

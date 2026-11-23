@@ -55,8 +55,24 @@ The PyPI distribution is **`hoja-cli`** and it installs the commands **`hoja`**,
 `-cli` suffix because the `hoja` project on PyPI is unrelated software: install
 `hoja-cli`, then run `hoja`.
 
-Point it at a workspace with `HOJA_API_URL` and `HOJA_TOKEN`, or configure an
-account once in `~/.config/hoja/config.toml`:
+Sign in once with your workspace address. `hoja auth login` opens the browser,
+you approve the request, and the CLI stores a refreshable token for that
+workspace (in the OS keyring when the optional `keyring` package is installed,
+otherwise in `credentials.json` next to the config file, mode 0600):
+
+```bash
+hoja auth login acme.example.com    # browser sign-in; add --device on a machine without one
+hoja auth status                    # account, workspace, credential source, expiry
+hoja auth logout                    # revoke at the server and delete the local tokens
+```
+
+Each sign-in appears under Connected apps in the workspace settings, where it can
+be revoked. Over SSH or without a display the CLI shows a code to approve from
+another device instead.
+
+For automation (CI, servers, scripts), use an API key instead: set
+`HOJA_API_URL` and `HOJA_TOKEN`, or add an account in
+`~/.config/hoja/config.toml`:
 
 ```toml
 [accounts.local]
@@ -74,6 +90,11 @@ hoja issue create --team ENG --title "Review onboarding flow"
 hoja -o json issue list --state Todo
 hoja <command> --help          # current flags for every command
 ```
+
+`--token`, `HOJA_TOKEN` and `HOJA_API_URL` take precedence over a stored sign-in,
+and a signed-in token is only ever sent to its own workspace. Plugins and scripts
+can read the current credentials with `hoja auth token --json`, which prints a
+fresh access token, its expiry, the GraphQL and MCP URLs and the workspace.
 
 `HOJA_TOKEN` and `HOJA_API_URL` are canonical. The former `LINEAR_TOKEN` and
 `LINEAR_API_URL` names are still read as deprecated aliases, and the GraphQL type
@@ -147,9 +168,10 @@ python -m pip install 'hoja-cli[mcp]'
 which hoja-mcp
 ```
 
-Register `hoja-mcp` as a stdio server in your client, passing the token through
-that client's environment. Use an absolute path when the client does not inherit
-your shell `PATH`:
+Register `hoja-mcp` as a stdio server in your client. It uses the same accounts
+as the CLI, so after `hoja auth login` no token is needed; for automation, pass an
+API key through the client's environment as below. Use an absolute path when the
+client does not inherit your shell `PATH`:
 
 ```json
 {

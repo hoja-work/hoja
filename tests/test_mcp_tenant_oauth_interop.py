@@ -194,7 +194,7 @@ async def _sdk_connect(edge: Edge, host: str, browser: httpx2.AsyncClient, seen:
         page = await browser.get(consent_url)
         assert page.status_code == 200, page.text
         seen["consent"] = page.text
-        csrf = re.search(r'name=csrf_token value="([^"]+)"', page.text).group(1)
+        csrf = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
         approved = await browser.post(consent_url, data={"decision": "allow", "csrf_token": csrf})
         # RFC 9700 4.11: never 307 here, or the browser re-POSTs the consent form to the client.
         assert approved.status_code == 303, approved.status_code
@@ -203,9 +203,12 @@ async def _sdk_connect(edge: Edge, host: str, browser: httpx2.AsyncClient, seen:
         query = parse_qs(back.query)
         captured["code"] = query["code"][0]
         captured["state"] = query.get("state", [None])[0]
+        # RFC 9207: the metadata advertises iss in the response, and the SDK checks it.
+        captured["iss"] = query.get("iss", [None])[0]
+        assert captured["iss"] == f"https://{host}/mcp"
 
     async def callback_handler() -> AuthorizationCodeResult:
-        return AuthorizationCodeResult(code=captured["code"], state=captured["state"])
+        return AuthorizationCodeResult(code=captured["code"], state=captured["state"], iss=captured["iss"])
 
     storage = MemoryStorage()
     provider = OAuthClientProvider(
@@ -332,13 +335,14 @@ def test_sdk_client_completes_oauth_and_is_pinned_to_the_consenting_workspace(sh
         await browser.aclose()
         return seen, texts
 
+    # The consent page names the workspace the browser is signed in to, with its host.
     seen_a, acme = asyncio.run(go("acme-ws"))
-    assert "Workspace: Acme Robotics" in seen_a["consent"]
+    assert f"<dd>Acme Robotics · {host}</dd>" in seen_a["consent"]
     assert "Acme Robotics" in acme["workspace"] and "Globex" not in acme["workspace"]
 
     # Same person, same password, browser signed in to the other workspace: a different grant.
     seen_g, globex = asyncio.run(go("globex-ws"))
-    assert "Workspace: Globex Shipping" in seen_g["consent"]
+    assert f"<dd>Globex Shipping · {host}</dd>" in seen_g["consent"]
     assert "Globex Shipping" in globex["workspace"] and "Acme" not in globex["workspace"]
 
 
