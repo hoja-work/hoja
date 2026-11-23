@@ -799,8 +799,9 @@ def r_my_notification_preferences(_, info):
 
 @query.field("issueLabelSettings")
 def r_issue_label_settings(_, info):
-    store, _w, org, _uid = _ctx(info)
-    return store.labels(org)
+    # Scoped like issueLabels: a private team's labels are invisible to non-members (HOJA-735).
+    store, _w, org, uid = _ctx(info)
+    return store.labels(org, viewer_id=uid)
 
 
 @query.field("myWorkspaces")
@@ -1620,6 +1621,7 @@ def m_membership_invitation_create(_, info, userId):
     target = store.get_user(org, userId)
     if not permissions.can(store, org, uid, "member.invite") or not target:
         return {"success": False, "user": None, "inviteCode": None, "emailQueued": False}
+    _refuse_admin_target(store, org, uid, userId)
     code = store.create_membership_invitation(org, userId, uid)
     email_queued = False
     if code and target.get("email"):
@@ -1668,6 +1670,22 @@ def m_membership_invitation_revoke(_, info, userId):
     return {"success": store.revoke_membership_invitation(org, userId)}
 
 
+def _actor_is_admin(store, org, uid) -> bool:
+    actor = store.get_user(org, uid)
+    return bool(actor and actor.get("admin"))
+
+
+def _refuse_admin_target(store, org, uid, user_id) -> None:
+    """member.invite manages members, never admins: changing an admin's access (deactivate,
+    remove, restore, a fresh invite link that would let someone claim the admin profile) is
+    for admins only (HOJA-735)."""
+    target = store.get_user(org, user_id) or next(
+        (m for m in store.archived_members(org) if m.get("id") == user_id), None)
+    if target and target.get("admin") and not _actor_is_admin(store, org, uid):
+        raise GraphQLError("Only workspace admins can change another admin's access.",
+                           extensions={"code": "FORBIDDEN"})
+
+
 @mutation.field("memberDeactivate")
 def m_member_deactivate(_, info, userId):
     return _set_member_active(info, userId, active=False)
@@ -1684,6 +1702,7 @@ def m_member_archive(_, info, userId):
     store, _w, org, uid = _ctx(info)
     if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False, "user": None}
+    _refuse_admin_target(store, org, uid, userId)
     target = store.archive_member(org, uid, userId)
     if target:
         audit.record_request(store, info, user_id=uid, action="member.archive",
@@ -1697,6 +1716,7 @@ def m_member_restore(_, info, userId):
     store, _w, org, uid = _ctx(info)
     if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False, "user": None}
+    _refuse_admin_target(store, org, uid, userId)
     target = store.restore_member(org, uid, userId)
     if target:
         audit.record_request(store, info, user_id=uid, action="member.restore",
@@ -1708,6 +1728,7 @@ def _set_member_active(info, user_id, *, active: bool):
     store, _w, org, uid = _ctx(info)
     if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False, "user": None}
+    _refuse_admin_target(store, org, uid, user_id)
     target = store.set_member_active(org, uid, user_id, active)
     if target:
         audit.record_request(
@@ -1744,6 +1765,10 @@ def m_member_invite(_, info, input):
     store, _w, org, uid = _ctx(info)
     if not permissions.can(store, org, uid, "member.invite"):
         return {"success": False, "user": None, "apiKey": None}
+    if input.get("admin") and not _actor_is_admin(store, org, uid):
+        # member.invite brings people in as members; making an admin is an admin decision.
+        raise GraphQLError("Only workspace admins can invite someone as an admin.",
+                           extensions={"code": "FORBIDDEN", "field": "admin"})
     team_ids = input.get("teamIds") or []
     for team_id in team_ids:
         if not store.team_by_id_or_key(org, team_id, viewer_id=uid):
@@ -2076,7 +2101,12 @@ def m_issue_unsubscribe(_, info, id):
 
 @mutation.field("cycleUpdate")
 def m_cycle_update(_, info, id, input):
-    _store, w, org, _uid = _ctx(info)
+    """Rename or re-date a cycle. Allowed where the caller can see the cycle's team, the same
+    rule as editing that team's tasks; a cycle on a team the caller cannot see answers
+    NOT_FOUND rather than confirming it exists (HOJA-735)."""
+    store, w, org, uid = _ctx(info)
+    if not store.cycle_by_id(org, id, viewer_id=uid):
+        raise GraphQLError("Cycle not found", extensions={"code": "NOT_FOUND"})
     updated = w.cycle_update(org, id, input)
     return {"success": bool(updated), "cycle": updated}
 

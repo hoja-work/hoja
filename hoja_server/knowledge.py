@@ -6,10 +6,14 @@ order (``workspace`` -> ``team`` -> ``project``) and injected into Agent Chat,
 delegated runner leases, and MCP tool responses.
 
 Permissions:
-- Read (``knowledgeDocs``, ``knowledgeContext``): any active member of the workspace.
+- Read (``knowledgeDocs``, ``knowledgeContext``): any active member of the workspace, for
+  workspace docs and for team/project docs whose team or project the member can see. A
+  private team's docs are invisible to non-members, exactly like its tasks (HOJA-735).
 - Write (``knowledgeDocCreate``, ``knowledgeDocUpdate``, ``knowledgeDocDelete``):
   workspace admins and active workspace members with write access (read-only API
-  keys and read-only OAuth tokens are blocked at the GraphQL/MCP mutation boundary).
+  keys and read-only OAuth tokens are blocked at the GraphQL/MCP mutation boundary),
+  under the same visibility rule: a doc on a team or project the caller cannot see is
+  NOT_FOUND, and nobody can file a doc under a team or project they cannot see.
 """
 
 from __future__ import annotations
@@ -159,6 +163,29 @@ def _require_active_member(store, org: str, uid: str) -> dict:
     return actor
 
 
+def _scope_visible(conn, org_id: str, viewer_id: str, scope: str, scope_id: str | None) -> bool:
+    """Whether the viewer may see a doc filed under (scope, scope_id): the same visibility
+    rule as the team's tasks and the project's page."""
+    from hoja_server import store as store_module
+
+    if scope == "workspace":
+        return True
+    if not scope_id:
+        return False
+    if scope == "team":
+        return store_module.team_visible(conn, org_id, viewer_id, scope_id)
+    if scope == "project":
+        stmt = select(project.c.id).where(and_(
+            project.c.organization_id == org_id, project.c.id == scope_id))
+        stmt = store_module._scope_projects(conn, stmt, org_id, viewer_id)
+        return conn.execute(stmt).first() is not None
+    return False
+
+
+def _not_found() -> None:
+    raise GraphQLError("Knowledge document not found.", extensions={"code": "NOT_FOUND"})
+
+
 def _validate_scope(conn, org_id: str, scope: str, scope_id: str | None) -> tuple[str, str | None]:
     clean_scope = (scope or "").strip().lower()
     if clean_scope not in VALID_SCOPES:
@@ -272,6 +299,7 @@ def r_knowledge_docs(_, info, scope=None, scopeId=None):  # noqa: N803
                 .order_by(workspace_knowledge.c.created_at, workspace_knowledge.c.title)
             ).all()
         ]
+        rows = [r for r in rows if _scope_visible(conn, org, uid, r["scope"], r["scope_id"])]
         rows.sort(key=lambda r: (_SCOPE_ORDER.get(r["scope"], 99), r["title"].lower(), r["created_at"]))
         return [_serialize(conn, org, r) for r in rows]
 
@@ -283,6 +311,10 @@ def r_knowledge_context(_, info, teamId=None, projectId=None):  # noqa: N803
     clean_team = (teamId or "").strip() or None
     clean_project = (projectId or "").strip() or None
     with store.engine.connect() as conn:
+        if clean_team and not _scope_visible(conn, org, uid, "team", clean_team):
+            raise GraphQLError("Team not found.", extensions={"code": "NOT_FOUND"})
+        if clean_project and not _scope_visible(conn, org, uid, "project", clean_project):
+            raise GraphQLError("Project not found.", extensions={"code": "NOT_FOUND"})
         return resolve_knowledge_context(conn, org, team_id=clean_team, project_id=clean_project)
 
 
@@ -295,6 +327,8 @@ def m_knowledge_doc_create(_, info, input):
     enabled = True if input.get("enabled") is None else bool(input.get("enabled"))
     with store.engine.begin() as conn:
         scope, scope_id = _validate_scope(conn, org, input.get("scope"), input.get("scopeId"))
+        if not _scope_visible(conn, org, uid, scope, scope_id):
+            _bad("scopeId", f"scopeId must reference an active {scope} in this workspace.")
         row_id = new_id()
         ts = now_iso()
         conn.execute(
@@ -336,8 +370,10 @@ def m_knowledge_doc_update(_, info, id, input):
             )
         ).first()
         if not existing:
-            raise GraphQLError("Knowledge document not found.", extensions={"code": "NOT_FOUND"})
+            _not_found()
         cur = dict(existing._mapping)
+        if not _scope_visible(conn, org, uid, cur["scope"], cur["scope_id"]):
+            _not_found()
 
         next_scope = input["scope"] if "scope" in input and input["scope"] is not None else cur["scope"]
         if "scopeId" in input:
@@ -347,6 +383,8 @@ def m_knowledge_doc_update(_, info, id, input):
         else:
             next_scope_id = cur["scope_id"]
         scope, scope_id = _validate_scope(conn, org, next_scope, next_scope_id)
+        if not _scope_visible(conn, org, uid, scope, scope_id):
+            _bad("scopeId", f"scopeId must reference an active {scope} in this workspace.")
 
         title = _validate_title(input["title"]) if "title" in input and input["title"] is not None else cur["title"]
         body = _validate_body(input["body"]) if "body" in input and input["body"] is not None else cur["body"]
@@ -385,6 +423,10 @@ def m_knowledge_doc_delete(_, info, id):
     store, org, uid = _ctx(info)
     _require_active_member(store, org, uid)
     with store.engine.begin() as conn:
+        existing = conn.execute(select(workspace_knowledge.c.scope, workspace_knowledge.c.scope_id).where(
+            and_(workspace_knowledge.c.organization_id == org, workspace_knowledge.c.id == id))).first()
+        if not existing or not _scope_visible(conn, org, uid, existing[0], existing[1]):
+            return False
         result = conn.execute(
             workspace_knowledge.delete().where(
                 and_(

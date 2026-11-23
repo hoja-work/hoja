@@ -1752,11 +1752,14 @@ class Store:
             if not target:
                 return None
             if target[0] and not is_admin:
-                admins = conn.execute(select(user.c.id).where(and_(
+                # Only an admin who can still sign in counts: a deactivated admin cannot
+                # rescue a workspace whose last active admin was demoted (HOJA-735).
+                other_active_admins = conn.execute(select(user.c.id).where(and_(
                     user.c.organization_id == org_id, user.c.admin.is_(True),
-                    user.c.archived_at.is_(None),
+                    user.c.active.is_(True), user.c.archived_at.is_(None),
+                    user.c.id != user_id,
                 )).with_for_update()).all()
-                if len(admins) <= 1:
+                if not other_active_admins:
                     return None
             result = conn.execute(user.update().where(and_(
                 user.c.organization_id == org_id, user.c.id == user_id,

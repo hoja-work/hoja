@@ -166,6 +166,8 @@ export default function MembersSettings() {
                 {visible.map((m) => {
                   const status = statusOf(m);
                   const self = m.id === viewer.id;
+                  // member.invite manages members only; an admin's access is changed by admins (HOJA-735).
+                  const manageable = canInvite && (isAdmin || !m.admin);
                   const keys = teamKeys(m.id);
                   const label = memberLabel(m);
                   return (
@@ -210,7 +212,7 @@ export default function MembersSettings() {
                               Teams…
                             </DropdownMenuItem>
                           )}
-                          {canInvite && status === "pending" && (
+                          {manageable && status === "pending" && (
                             <DropdownMenuItem
                               onSelect={() =>
                                 setPending({ kind: "relink", member: m })
@@ -219,7 +221,7 @@ export default function MembersSettings() {
                               New invite link…
                             </DropdownMenuItem>
                           )}
-                          {canInvite && status === "deactivated" && (
+                          {manageable && status === "deactivated" && (
                             <DropdownMenuItem
                               onSelect={async () => {
                                 try {
@@ -241,7 +243,7 @@ export default function MembersSettings() {
                               Reactivate
                             </DropdownMenuItem>
                           )}
-                          {canInvite && !self && (
+                          {manageable && !self && (
                             <>
                               <DropdownMenuSeparator />
                               {status === "pending" && (
