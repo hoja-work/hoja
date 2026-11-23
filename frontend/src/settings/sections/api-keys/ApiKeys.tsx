@@ -1,5 +1,5 @@
 import { useId, useMemo, useState } from "react";
-import { KeyRound, Plus, Search, Trash2 } from "lucide-react";
+import { Bot, KeyRound, Plus, Search, Trash2, User } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { DropdownMenuItem } from "../../../components/ui/menu";
@@ -65,9 +65,11 @@ function CreateKeyDialog({
   onCreated: (label: string, secret: string) => void;
 }) {
   const nameId = useId();
+  const actorId = useId();
   const accessId = useId();
   const expiryId = useId();
   const [label, setLabel] = useState("");
+  const [actorKind, setActorKind] = useState("agent");
   const [access, setAccess] = useState("read_write");
   const [expiry, setExpiry] = useState("90");
   const trimmed = label.trim();
@@ -79,12 +81,13 @@ function CreateKeyDialog({
         onOpenChange(o);
         if (!o) {
           setLabel("");
+          setActorKind("agent");
           setAccess("read_write");
           setExpiry("90");
         }
       }}
       title="Create API key"
-      description="A key acts as you, with the access you choose. Use it for scripts and automation that can't sign in through a browser."
+      description="Choose whether this key is used by an agent on your behalf or directly by you."
       submitLabel="Create key"
       canSubmit={!!trimmed && !tooLong}
       onSubmit={async () => {
@@ -95,8 +98,8 @@ function CreateKeyDialog({
         const d = await gql<{
           apiKeyCreate: { success: boolean; secret: string | null } | null;
         }>(
-          "mutation($label:String!,$access:String!,$expiresAt:DateTime){apiKeyCreate(label:$label,access:$access,expiresAt:$expiresAt){success apiKey{id} secret}}",
-          { label: trimmed, access, expiresAt },
+          "mutation($label:String!,$access:String!,$expiresAt:DateTime,$actorKind:String!){apiKeyCreate(label:$label,access:$access,expiresAt:$expiresAt,actorKind:$actorKind){success apiKey{id} secret}}",
+          { label: trimmed, access, expiresAt, actorKind },
         );
         if (!d.apiKeyCreate?.success || !d.apiKeyCreate.secret)
           throw new Error(
@@ -104,6 +107,7 @@ function CreateKeyDialog({
           );
         onCreated(trimmed, d.apiKeyCreate.secret);
         setLabel("");
+        setActorKind("agent");
         setAccess("read_write");
         setExpiry("90");
       }}
@@ -118,10 +122,35 @@ function CreateKeyDialog({
           id={nameId}
           value={label}
           autoComplete="off"
-          placeholder="e.g. CI deploys"
+          placeholder="e.g. Claude Code or CI deploys"
 
           autoFocus
           onChange={(e) => setLabel(e.target.value)}
+        />
+      </Field>
+      <Field
+        label="Who will use this key?"
+        htmlFor={actorId}
+        help="Agent keys mark writes as an agent acting on your behalf, so SLAs and activity logs stay accurate."
+      >
+        <Select
+          id={actorId}
+          value={actorKind}
+          onValueChange={setActorKind}
+          className="sm:w-full"
+          options={[
+            {
+              value: "agent",
+              label: "An agent (on my behalf)",
+              description:
+                "Writes record actor_kind = agent with you as sponsor.",
+            },
+            {
+              value: "human",
+              label: "Just me (scripts or CLI)",
+              description: "Writes record as coming directly from you.",
+            },
+          ]}
         />
       </Field>
       <Field
@@ -191,6 +220,19 @@ export function ApiKeysSection() {
     return { active, inactive: all.length - active };
   }, [all]);
 
+  const setKeyActorKind = async (k: ApiKey, nextKind: "agent" | "human") => {
+    const d = await gql<{
+      apiKeyUpdate: { success: boolean; apiKey: ApiKey | null } | null;
+    }>(
+      `mutation($id:String!,$actorKind:String!){apiKeyUpdate(id:$id,actorKind:$actorKind){success apiKey{${API_KEY_FIELDS}}}}`,
+      { id: k.id, actorKind: nextKind },
+    );
+    if (d.apiKeyUpdate?.success && d.apiKeyUpdate.apiKey) {
+      const updated = d.apiKeyUpdate.apiKey;
+      keys.setData((list) => list?.map((x) => (x.id === k.id ? updated : x)));
+    }
+  };
+
   return (
     <SettingsSection
       title="API keys"
@@ -233,12 +275,51 @@ export function ApiKeysSection() {
           const visible = data.filter((k) => {
             const active = keyStatus(k, now) === "active";
             if ((filter === "active") !== active) return false;
+            const setKeyActorKind = async (
+              k: ApiKey,
+              nextKind: "agent" | "human",
+            ) => {
+              const d = await gql<{
+                apiKeyUpdate: {
+                  success: boolean;
+                  apiKey: ApiKey | null;
+                } | null;
+              }>(
+                `mutation($id:String!,$actorKind:String!){apiKeyUpdate(id:$id,actorKind:$actorKind){success apiKey{${API_KEY_FIELDS}}}}`,
+                { id: k.id, actorKind: nextKind },
+              );
+              if (d.apiKeyUpdate?.success && d.apiKeyUpdate.apiKey) {
+                const updated = d.apiKeyUpdate.apiKey;
+                keys.setData((list) =>
+                  list?.map((x) => (x.id === k.id ? updated : x)),
+                );
+              }
+            };
+
             return (
               !q ||
               (k.label || "").toLowerCase().includes(q) ||
               (k.hint || "").toLowerCase().includes(q)
             );
           });
+          const setKeyActorKind = async (
+            k: ApiKey,
+            nextKind: "agent" | "human",
+          ) => {
+            const d = await gql<{
+              apiKeyUpdate: { success: boolean; apiKey: ApiKey | null } | null;
+            }>(
+              `mutation($id:String!,$actorKind:String!){apiKeyUpdate(id:$id,actorKind:$actorKind){success apiKey{${API_KEY_FIELDS}}}}`,
+              { id: k.id, actorKind: nextKind },
+            );
+            if (d.apiKeyUpdate?.success && d.apiKeyUpdate.apiKey) {
+              const updated = d.apiKeyUpdate.apiKey;
+              keys.setData((list) =>
+                list?.map((x) => (x.id === k.id ? updated : x)),
+              );
+            }
+          };
+
           return (
             <SettingsCard>
               {data.length > 0 && (
@@ -299,12 +380,44 @@ export function ApiKeysSection() {
                   {visible.map((k) => {
                     const status = keyStatus(k, now);
                     const name = k.label || "API key";
+                    const setKeyActorKind = async (
+                      k: ApiKey,
+                      nextKind: "agent" | "human",
+                    ) => {
+                      const d = await gql<{
+                        apiKeyUpdate: {
+                          success: boolean;
+                          apiKey: ApiKey | null;
+                        } | null;
+                      }>(
+                        `mutation($id:String!,$actorKind:String!){apiKeyUpdate(id:$id,actorKind:$actorKind){success apiKey{${API_KEY_FIELDS}}}}`,
+                        { id: k.id, actorKind: nextKind },
+                      );
+                      if (d.apiKeyUpdate?.success && d.apiKeyUpdate.apiKey) {
+                        const updated = d.apiKeyUpdate.apiKey;
+                        keys.setData((list) =>
+                          list?.map((x) => (x.id === k.id ? updated : x)),
+                        );
+                      }
+                    };
+
                     return (
                       <li key={k.id} className="list-none border-t border-line">
                         <ResourceRow
                           title={name}
                           badges={
                             <>
+                              {k.actorKind === "agent" ? (
+                                <Badge tone="strong">
+                                  {k.agentName
+                                    ? `Agent · ${k.agentName}`
+                                    : "Agent"}
+                                </Badge>
+                              ) : k.actorKind === "human" ? (
+                                <Badge>Personal</Badge>
+                              ) : (
+                                <Badge tone="neutral">Used by an agent?</Badge>
+                              )}
                               <Badge>
                                 {k.access === "read"
                                   ? "Read only"
@@ -338,13 +451,35 @@ export function ApiKeysSection() {
                           menuLabel={`Actions for ${name}`}
                           actions={
                             status === "revoked" ? undefined : (
-                              <DropdownMenuItem
-                                destructive
-                                onSelect={() => setRevoking(k)}
-                              >
-                                <Trash2 aria-hidden="true" />
-                                Revoke…
-                              </DropdownMenuItem>
+                              <>
+                                {k.actorKind !== "agent" && (
+                                  <DropdownMenuItem
+                                    onSelect={() =>
+                                      void setKeyActorKind(k, "agent")
+                                    }
+                                  >
+                                    <Bot aria-hidden="true" />
+                                    Mark as used by an agent
+                                  </DropdownMenuItem>
+                                )}
+                                {k.actorKind !== "human" && (
+                                  <DropdownMenuItem
+                                    onSelect={() =>
+                                      void setKeyActorKind(k, "human")
+                                    }
+                                  >
+                                    <User aria-hidden="true" />
+                                    Mark as personal
+                                  </DropdownMenuItem>
+                                )}
+                                <DropdownMenuItem
+                                  destructive
+                                  onSelect={() => setRevoking(k)}
+                                >
+                                  <Trash2 aria-hidden="true" />
+                                  Revoke…
+                                </DropdownMenuItem>
+                              </>
                             )
                           }
                         />

@@ -539,7 +539,15 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
         with tenant_context.system(), self.engine.connect() as conn:
             row = (
                 conn.execute(
-                    select(db.oauth_access_token).where(
+                    select(
+                        db.oauth_access_token,
+                        db.oauth_grant.c.actor_kind.label("grant_actor_kind"),
+                    )
+                    .outerjoin(
+                        db.oauth_grant,
+                        db.oauth_grant.c.id == db.oauth_access_token.c.grant_id,
+                    )
+                    .where(
                         db.oauth_access_token.c.token_hash == _digest(token),
                         db.oauth_access_token.c.revoked_at.is_(None),
                     )
@@ -557,9 +565,29 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
             # <origin>/graphql and <origin>/mcp. Third-party clients stay bound
             # to the one resource they asked for.
             resource = self._resource_url()
-        touch_grant(self.engine, row["grant_id"], _meta().get("ip"))
-        tenant_context.enter(row["organization_id"], row["user_id"])
-        subject = json.dumps({"user_id": row["user_id"], "org_id": row["organization_id"]})
+        meta = _meta()
+        touch_grant(self.engine, row["grant_id"], meta.get("ip"))
+        default_kind = "human" if row["client_id"] == FIRST_PARTY_CLIENT_ID else "agent"
+        actor_kind = row.get("grant_actor_kind") or default_kind
+        if meta.get("actor_hint") == "agent":
+            actor_kind = "agent"
+        on_behalf_of = row["user_id"] if actor_kind == "agent" else None
+        session_id = tenant_context.clean_session_id(meta.get("session_id"))
+        tenant_context.enter(
+            row["organization_id"], row["user_id"], actor_kind,
+            actor_id=row["user_id"], on_behalf_of=on_behalf_of,
+            credential_kind="oauth", credential_id=row["grant_id"], session_id=session_id,
+        )
+        subject = json.dumps({
+            "user_id": row["user_id"],
+            "org_id": row["organization_id"],
+            "actor_kind": actor_kind,
+            "actor_id": row["user_id"],
+            "on_behalf_of": on_behalf_of,
+            "credential_kind": "oauth",
+            "credential_id": row["grant_id"],
+            "session_id": session_id,
+        })
         return AccessToken(
             token=token,
             client_id=row["client_id"],
@@ -583,8 +611,19 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
             key = self.store.resolve_token(token)
         if not key or (self.required_org and key["organization_id"] != self.required_org):
             return None
-        # An agent principal's own key writes as the agent, never as a person.
-        tenant_context.enter(key["organization_id"], key["user_id"], key.get("kind") or "human")
+        meta = _meta()
+        actor_kind = key.get("kind") or "human"
+        actor_id = key.get("actor_id") or key["user_id"]
+        on_behalf_of = key.get("on_behalf_of")
+        if meta.get("actor_hint") == "agent" and actor_kind != "agent":
+            actor_kind = "agent"
+            on_behalf_of = key["user_id"]
+        session_id = tenant_context.clean_session_id(meta.get("session_id"))
+        tenant_context.enter(
+            key["organization_id"], key["user_id"], actor_kind,
+            actor_id=actor_id, on_behalf_of=on_behalf_of,
+            credential_kind="api_key", credential_id=key["id"], session_id=session_id,
+        )
         scopes = [READ_SCOPE] if key.get("access") == "read" else list(ALL_SCOPES)
         return AccessToken(
             token=token,
@@ -592,7 +631,16 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
             scopes=scopes,
             expires_at=None,
             resource=self._resource_url(),
-            subject=json.dumps({"user_id": key["user_id"], "org_id": key["organization_id"]}),
+            subject=json.dumps({
+                "user_id": key["user_id"],
+                "org_id": key["organization_id"],
+                "actor_kind": actor_kind,
+                "actor_id": actor_id,
+                "on_behalf_of": on_behalf_of,
+                "credential_kind": "api_key",
+                "credential_id": key["id"],
+                "session_id": session_id,
+            }),
         )
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
@@ -801,9 +849,13 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
             granted = [READ_SCOPE]
             if form.get("access") == "write" and WRITE_SCOPE in requested and WRITE_SCOPE in ceiling:
                 granted.append(WRITE_SCOPE)
+            default_actor = "human" if row["client_id"] == FIRST_PARTY_CLIENT_ID else "agent"
+            chosen_actor = str(form.get("actor_kind") or default_actor)
+            actor_kind = chosen_actor if chosen_actor in ("agent", "human") else default_actor
             grant_id = upsert_grant(
                 conn, org_id=org_id, user_id=user_id, client_id=row["client_id"], client_name=name,
-                label=row.get("device_label"), scopes=granted, user_agent=row.get("user_agent"))
+                label=row.get("device_label"), scopes=granted, user_agent=row.get("user_agent"),
+                actor_kind=actor_kind)
             code = _secret()
             conn.execute(db.oauth_authorization.insert().values(
                 code_hash=_digest(code), client_id=row["client_id"], user_id=user_id,
@@ -942,14 +994,16 @@ class HojaOAuthProvider(OAuthAuthorizationServerProvider):
         if form.get("access") == "write" and WRITE_SCOPE in requested and WRITE_SCOPE in ceiling:
             granted.append(WRITE_SCOPE)
         with tenant_context.system(), self.engine.begin() as conn:
+            chosen_actor = str(form.get("actor_kind") or "human")
+            actor_kind = chosen_actor if chosen_actor in ("agent", "human") else "human"
             grant_id = upsert_grant(conn, org_id=org_id, user_id=user_id, client_id=row["client_id"],
                                     client_name=FIRST_PARTY_CLIENT.client_name, label=row["device_label"],
-                                    scopes=granted, user_agent=row["user_agent"])
+                                    scopes=granted, user_agent=row["user_agent"], actor_kind=actor_kind)
             changed = conn.execute(update(db.oauth_device_code).where(
                 db.oauth_device_code.c.device_code_hash == row["device_code_hash"],
                 db.oauth_device_code.c.status == "pending").values(
                 status="approved", user_id=user_id, organization_id=org_id,
-                granted_scopes=json.dumps(granted), grant_id=grant_id)).rowcount
+                granted_scopes=json.dumps(granted), grant_id=grant_id, actor_kind=actor_kind)).rowcount
         if changed != 1:
             return "expired", consent_pages.expired_page(client_name="Hoja CLI")
         return "approved", None
@@ -987,9 +1041,13 @@ def touch_grant(engine, grant_id: str | None, ip: str | None) -> None:
 
 
 def upsert_grant(conn, *, org_id: str, user_id: str, client_id: str, client_name: str | None,
-                 label: str | None, scopes: list[str], user_agent: str | None) -> str:
+                 label: str | None, scopes: list[str], user_agent: str | None,
+                 actor_kind: str | None = None) -> str:
     """One authorized app per (person, workspace, client, device label); returns its id (the grant id)."""
     now = _iso(_now())
+    resolved_kind = actor_kind if actor_kind in ("agent", "human") else (
+        "human" if client_id == FIRST_PARTY_CLIENT_ID else "agent"
+    )
     row = conn.execute(select(db.oauth_grant.c.id).where(
         db.oauth_grant.c.organization_id == org_id, db.oauth_grant.c.user_id == user_id,
         db.oauth_grant.c.client_id == client_id,
@@ -998,13 +1056,14 @@ def upsert_grant(conn, *, org_id: str, user_id: str, client_id: str, client_name
     )).first()
     if row:
         conn.execute(update(db.oauth_grant).where(db.oauth_grant.c.id == row[0]).values(
-            scopes=json.dumps(scopes), client_name=client_name, updated_at=now, user_agent=user_agent))
+            scopes=json.dumps(scopes), client_name=client_name, updated_at=now,
+            user_agent=user_agent, actor_kind=resolved_kind))
         return row[0]
     grant_id = _secret()
     conn.execute(db.oauth_grant.insert().values(
         id=grant_id, organization_id=org_id, user_id=user_id, client_id=client_id,
         client_name=client_name, device_label=label, scopes=json.dumps(scopes),
-        user_agent=user_agent, created_at=now, updated_at=now))
+        user_agent=user_agent, actor_kind=resolved_kind, created_at=now, updated_at=now))
     return grant_id
 
 
@@ -1120,6 +1179,17 @@ def build_server(provider: HojaOAuthProvider, public_host: str | None = None) ->
         except Exception as exc:  # fail closed: an unresolvable principal is not a human
             raise ToolError("The caller's identity could not be resolved. " + DENY_HINT) from exc
         agent_member_id = member["id"] if member else None
+        actor_kind = identity.get("actor_kind") or ("agent" if agent_member_id else "human")
+        actor_id = identity.get("actor_id") or user_id
+        on_behalf_of = identity.get("on_behalf_of")
+        credential_kind = identity.get("credential_kind") or ("api_key" if access.client_id == "api-key" else "oauth")
+        credential_id = identity.get("credential_id")
+        session_id = identity.get("session_id")
+        tenant_context.enter(
+            org_id, user_id, actor_kind,
+            actor_id=actor_id, on_behalf_of=on_behalf_of,
+            credential_kind=credential_kind, credential_id=credential_id, session_id=session_id,
+        )
         return {
             "store": provider.store,
             "writer": provider.writer,
@@ -1128,11 +1198,12 @@ def build_server(provider: HojaOAuthProvider, public_host: str | None = None) ->
             "identity_id": None,
             "browser_session": False,
             "agent_member_id": agent_member_id,
-            # Which credential the caller presented, for the operations line: a
-            # raw Hoja API key is reported as ``api_key``, an OAuth access token
-            # placed by a person as ``human``. The distinguisher is the client id
-            # ``_load_api_key`` assigns, not anything in the token's subject.
-            "credential_kind": "api_key" if access.client_id == "api-key" else "oauth",
+            "actor_kind": actor_kind,
+            "actor_id": actor_id,
+            "on_behalf_of": on_behalf_of,
+            "credential_kind": credential_kind,
+            "credential_id": credential_id,
+            "session_id": session_id,
             # Read-only grants must not trigger resolver-side reconciliation writes.
             "read_only": WRITE_SCOPE not in granted,
         }
@@ -1203,6 +1274,7 @@ def build_server(provider: HojaOAuthProvider, public_host: str | None = None) ->
             email=viewer.get("email"),
             switch_account_url="/signout",
             other_hosts=elsewhere,
+            default_actor_kind="human" if pending["client_id"] == FIRST_PARTY_CLIENT_ID else "agent",
         ), headers=no_store)
 
     return server

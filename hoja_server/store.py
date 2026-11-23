@@ -32,6 +32,7 @@ class InviteRefused(Exception):
 
 
 from hoja_server.db import (
+    agent_member,
     api_key,
     attachment,
     browser_session,
@@ -751,16 +752,18 @@ class Store:
         return out
 
     def resolve_token(self, token: str) -> dict | None:
-        """token → {user_id, organization_id, kind} or None.
+        """token → {id, user_id, organization_id, kind, actor_id, on_behalf_of, ...} or None.
 
-        ``kind`` is the owner's user kind, so a caller can attribute the request
-        to an agent principal instead of assuming a person (HOJA-602-A-3).
+        ``kind`` is the effective actor kind: an agent principal's own key or an
+        agent-scoped key owned by a person both resolve to ``agent`` (with
+        ``on_behalf_of`` naming the sponsoring human when owned by a person).
         """
         th = token_hash(token)
+        now = datetime.now(timezone.utc).isoformat()
         with self.engine.connect() as conn:
             row = _one(
                 conn,
-                select(api_key, user.c.kind.label("kind"))
+                select(api_key, user.c.kind.label("user_kind"))
                 .join(
                     user,
                     and_(
@@ -773,12 +776,38 @@ class Store:
                         api_key.c.token_hash == th,
                         api_key.c.revoked_at.is_(None),
                         or_(api_key.c.expires_at.is_(None),
-                            api_key.c.expires_at > datetime.now(timezone.utc).isoformat()),
+                            api_key.c.expires_at > now),
                         user.c.active.is_(True),
                         user.c.archived_at.is_(None),
                     )
                 ),
             )
+            if not row:
+                return None
+            user_kind = row.get("user_kind") or "human"
+            agent_uid = row.get("agent_user_id")
+            if agent_uid:
+                bound = conn.execute(select(user.c.id).where(and_(
+                    user.c.id == agent_uid,
+                    user.c.organization_id == row["organization_id"],
+                    user.c.kind == "agent",
+                    user.c.active.is_(True),
+                    user.c.archived_at.is_(None),
+                ))).first()
+                if not bound:
+                    return None
+            if user_kind == "agent":
+                row["kind"] = "agent"
+                row["actor_id"] = row["user_id"]
+                row["on_behalf_of"] = None
+            elif row.get("actor_kind") == "agent" or agent_uid:
+                row["kind"] = "agent"
+                row["actor_id"] = agent_uid or row["user_id"]
+                row["on_behalf_of"] = row["user_id"]
+            else:
+                row["kind"] = user_kind
+                row["actor_id"] = row["user_id"]
+                row["on_behalf_of"] = None
             return row
 
     def touch_api_key(self, key_id: str, last_used_at: str | None = None) -> None:
@@ -795,6 +824,7 @@ class Store:
 
     def list_api_keys(self, org_id: str, user_id: str) -> list[dict]:
         """Return metadata for this user's keys in the active workspace only."""
+        agent_user = user.alias("agent_user")
         with self.engine.connect() as conn:
             return _conn_rows(conn, select(
                 api_key.c.id, api_key.c.label, api_key.c.access, api_key.c.hint,
@@ -802,16 +832,50 @@ class Store:
                 api_key.c.last_used_at.label("lastUsedAt"),
                 api_key.c.created_at.label("createdAt"),
                 api_key.c.revoked_at.label("revokedAt"),
+                api_key.c.actor_kind.label("actorKind"),
+                api_key.c.agent_user_id.label("agentUserId"),
+                agent_member.c.id.label("agentMemberId"),
+                agent_user.c.name.label("agentName"),
+            ).select_from(
+                api_key
+                .outerjoin(agent_member, and_(
+                    agent_member.c.user_id == api_key.c.agent_user_id,
+                    agent_member.c.organization_id == api_key.c.organization_id,
+                ))
+                .outerjoin(agent_user, and_(
+                    agent_user.c.id == api_key.c.agent_user_id,
+                    agent_user.c.organization_id == api_key.c.organization_id,
+                ))
             ).where(and_(api_key.c.organization_id == org_id,
                          api_key.c.user_id == user_id)).order_by(api_key.c.created_at))
 
+    def _resolve_agent_user_id(self, conn, org_id: str, agent_member_id: str | None) -> str | None | bool:
+        """Resolve an active agent_member id (or agent user id) in ``org_id``. Returns False on invalid."""
+        if not agent_member_id:
+            return None
+        row = conn.execute(select(agent_member.c.user_id).join(
+            user, and_(user.c.id == agent_member.c.user_id,
+                       user.c.organization_id == agent_member.c.organization_id),
+        ).where(and_(
+            agent_member.c.organization_id == org_id,
+            or_(agent_member.c.id == agent_member_id, agent_member.c.user_id == agent_member_id),
+            agent_member.c.archived_at.is_(None),
+            user.c.kind == "agent",
+            user.c.active.is_(True),
+            user.c.archived_at.is_(None),
+        ))).first()
+        return row[0] if row else False
+
     def create_api_key(self, org_id: str, user_id: str, label: str, access: str,
-                       expires_at: str | None = None) -> tuple[dict, str] | None:
+                       expires_at: str | None = None, *, actor_kind: str = "agent",
+                       agent_member_id: str | None = None) -> tuple[dict, str] | None:
         from hoja_server.db import gen_token
         clean_label = label.strip()
         if not clean_label or len(clean_label) > 80:
             return None
         if access not in ("read", "read_write"):
+            return None
+        if actor_kind not in ("human", "agent"):
             return None
         expires_at = _normalize_expiry(expires_at)
         if expires_at is False:
@@ -820,17 +884,69 @@ class Store:
         key_id = new_id()
         now = datetime.now(timezone.utc).isoformat()
         with self.engine.begin() as conn:
-            if not conn.execute(select(user.c.id).where(and_(
-                    user.c.id == user_id, user.c.organization_id == org_id,
-                    user.c.active.is_(True), user.c.archived_at.is_(None)))).first():
+            owner = conn.execute(select(user.c.id, user.c.kind).where(and_(
+                user.c.id == user_id, user.c.organization_id == org_id,
+                user.c.active.is_(True), user.c.archived_at.is_(None)))).first()
+            if not owner:
                 return None
+            eff_kind = "agent" if owner.kind == "agent" else actor_kind
+            if eff_kind == "human" and agent_member_id:
+                return None
+            agent_uid = None
+            agent_name = None
+            resolved_member_id = None
+            if eff_kind == "agent" and agent_member_id:
+                agent_uid = self._resolve_agent_user_id(conn, org_id, agent_member_id)
+                if agent_uid is False:
+                    return None
+                info_row = conn.execute(select(agent_member.c.id, user.c.name).join(
+                    user, user.c.id == agent_member.c.user_id).where(and_(
+                        agent_member.c.organization_id == org_id,
+                        agent_member.c.user_id == agent_uid))).first()
+                if info_row:
+                    resolved_member_id, agent_name = info_row.id, info_row.name
             conn.execute(api_key.insert().values(
                 id=key_id, token_hash=token_hash(raw_token), label=clean_label,
                 hint=raw_token[-4:], access=access, expires_at=expires_at,
-                user_id=user_id, organization_id=org_id, created_at=now))
+                user_id=user_id, organization_id=org_id, created_at=now,
+                actor_kind=eff_kind, agent_user_id=agent_uid))
         return {"id": key_id, "label": clean_label, "access": access, "hint": raw_token[-4:],
                 "expiresAt": expires_at, "lastUsedAt": None,
-                "createdAt": now, "revokedAt": None}, raw_token
+                "createdAt": now, "revokedAt": None,
+                "actorKind": eff_kind, "agentUserId": agent_uid,
+                "agentMemberId": resolved_member_id, "agentName": agent_name}, raw_token
+
+    def update_api_key(self, org_id: str, user_id: str, key_id: str, *,
+                       actor_kind: str | None = None,
+                       agent_member_id: str | None = None) -> dict | None:
+        if actor_kind is not None and actor_kind not in ("human", "agent"):
+            return None
+        with self.engine.begin() as conn:
+            row = conn.execute(select(api_key).where(and_(
+                api_key.c.id == key_id,
+                api_key.c.organization_id == org_id,
+                api_key.c.user_id == user_id,
+                api_key.c.revoked_at.is_(None),
+            ))).mappings().first()
+            if not row:
+                return None
+            eff_kind = actor_kind if actor_kind is not None else (row.get("actor_kind") or "human")
+            vals: dict = {"actor_kind": eff_kind}
+            if eff_kind == "human":
+                vals["agent_user_id"] = None
+            elif agent_member_id is not None:
+                if agent_member_id == "":
+                    vals["agent_user_id"] = None
+                else:
+                    agent_uid = self._resolve_agent_user_id(conn, org_id, agent_member_id)
+                    if agent_uid is False:
+                        return None
+                    vals["agent_user_id"] = agent_uid
+            conn.execute(api_key.update().where(api_key.c.id == key_id).values(**vals))
+        for item in self.list_api_keys(org_id, user_id):
+            if item["id"] == key_id:
+                return item
+        return None
 
     def revoke_api_key(self, org_id: str, user_id: str, key_id: str) -> bool:
         with self.engine.begin() as conn:

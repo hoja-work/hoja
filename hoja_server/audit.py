@@ -100,6 +100,7 @@ ACTIONS = frozenset({
     # Credential and connector surfaces.
     "connector.token.use",
     "api_key.create",
+    "api_key.update",
     "api_key.revoke",
     # Membership and authority.
     "member.invite",
@@ -238,15 +239,16 @@ def actor_for(info, fallback_user_id: str) -> tuple[str, str, str | None]:
     """Who this request writes as, from the request itself.
 
     ``request.state.actor_kind`` is what the credential named (``human``, ``bot``
-    or ``agent``); the authenticated user id is the actor either way. An agent
-    writing through its own key has no human in the request, so ``on_behalf_of``
-    stays empty rather than borrowing one.
+    or ``agent``); ``request.state.actor_id`` may name a bound agent principal
+    when ``on_behalf_of`` records the sponsoring human.
     """
     context = getattr(info, "context", None) or {}
     request = context.get("request") if isinstance(context, dict) else None
     state = getattr(request, "state", None)
     kind = getattr(state, "actor_kind", None) or "human"
-    return kind, fallback_user_id, None
+    actor_id = getattr(state, "actor_id", None) or fallback_user_id
+    on_behalf_of = getattr(state, "on_behalf_of", None)
+    return kind, actor_id, on_behalf_of
 
 
 def record_request(store, info, *, user_id: str, action: str, **kwargs) -> int:

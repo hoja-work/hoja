@@ -37,6 +37,8 @@ SDL = gql(
       clientName: String
       "True for Hoja's own apps (the Hoja CLI)."
       firstParty: Boolean!
+      "Whether this grant acts as an agent on your behalf (agent) or as you (human)."
+      actorKind: String!
       scopes: [String!]!
       "The device the app named when it was approved, e.g. hoja-cli on laptop."
       deviceLabel: String
@@ -107,6 +109,7 @@ def _node(row, people: dict) -> dict:
         "clientId": row["client_id"],
         "clientName": row["client_name"] or row["client_id"],
         "firstParty": row["client_id"] == FIRST_PARTY_CLIENT_ID,
+        "actorKind": row.get("actor_kind") or ("human" if row["client_id"] == FIRST_PARTY_CLIENT_ID else "agent"),
         "scopes": json.loads(row["scopes"] or "[]"),
         "deviceLabel": row["device_label"],
         "createdAt": row["created_at"],

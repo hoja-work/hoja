@@ -92,7 +92,12 @@ export function AppsSection({ scope }: { scope: "mine" | "workspace" }) {
                     <ResourceRow
                       title={`${appName(app)}${app.deviceLabel ? ` · ${app.deviceLabel}` : ""}`}
                       badges={
-                        app.firstParty ? <Badge>Hoja app</Badge> : undefined
+                        <>
+                          {app.actorKind === "agent" && (
+                            <Badge tone="strong">Agent</Badge>
+                          )}
+                          {app.firstParty && <Badge>Hoja app</Badge>}
+                        </>
                       }
                       meta={appMeta(app, workspace)}
                       menuLabel={`Actions for ${appName(app)}`}

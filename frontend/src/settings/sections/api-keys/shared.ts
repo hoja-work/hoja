@@ -7,6 +7,10 @@ export type ApiKey = {
   lastUsedAt: string | null;
   createdAt: string | null;
   revokedAt: string | null;
+  actorKind?: string | null;
+  agentUserId?: string | null;
+  agentMemberId?: string | null;
+  agentName?: string | null;
 };
 
 export type App = {
@@ -14,6 +18,7 @@ export type App = {
   clientId: string;
   clientName?: string | null;
   firstParty: boolean;
+  actorKind?: string | null;
   scopes: string[];
   deviceLabel?: string | null;
   createdAt: string;
@@ -34,9 +39,9 @@ export type Session = {
 };
 
 export const API_KEY_FIELDS =
-  "id label access hint expiresAt lastUsedAt createdAt revokedAt";
+  "id label access hint expiresAt lastUsedAt createdAt revokedAt actorKind agentUserId agentMemberId agentName";
 export const APP_FIELDS =
-  "id clientId clientName firstParty scopes deviceLabel createdAt lastUsedAt lastUsedIp user { id name email }";
+  "id clientId clientName firstParty actorKind scopes deviceLabel createdAt lastUsedAt lastUsedIp user { id name email }";
 
 export function formatWhen(value?: string | null, never = "Never") {
   if (!value) return never;

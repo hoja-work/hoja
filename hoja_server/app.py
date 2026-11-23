@@ -642,6 +642,18 @@ def create_app(
             return uid, org, None, False
         return None, None, None, False
 
+    def _enter_request_context(request: Request, org: str | None, uid: str) -> None:
+        tenant_context.enter(
+            org,
+            uid,
+            getattr(request.state, "actor_kind", "human"),
+            actor_id=getattr(request.state, "actor_id", None) or uid,
+            on_behalf_of=getattr(request.state, "on_behalf_of", None),
+            credential_kind=getattr(request.state, "credential_kind", None),
+            credential_id=getattr(request.state, "credential_id", None),
+            session_id=getattr(request.state, "session_id", None),
+        )
+
     def _auth(request: Request):
         """Resolve the caller, then scope the rest of this request to its organization.
 
@@ -669,7 +681,7 @@ def create_app(
                         policy, _client_ip(request)):
                     return None, None, None, False
             org_slots.enter(request.scope, result[1])
-            tenant_context.enter(result[1], result[0], getattr(request.state, "actor_kind", "human"))
+            _enter_request_context(request, result[1], result[0])
         return result
 
     def _oauth_graphql_credential(request: Request, token: str) -> dict | None:
@@ -685,12 +697,21 @@ def create_app(
             return None
         from sqlalchemy import select
 
-        from hoja_server.db import oauth_access_token
+        from hoja_server.db import oauth_access_token, oauth_grant
         from hoja_server.mcp_oauth import FIRST_PARTY_CLIENT_ID, WRITE_SCOPE, touch_grant
 
         with tenant_context.system(), engine.connect() as conn:
-            row = conn.execute(select(oauth_access_token).where(
-                oauth_access_token.c.token_hash == token_hash(token))).mappings().first()
+            row = conn.execute(
+                select(
+                    oauth_access_token,
+                    oauth_grant.c.actor_kind.label("grant_actor_kind"),
+                )
+                .outerjoin(
+                    oauth_grant,
+                    oauth_grant.c.id == oauth_access_token.c.grant_id,
+                )
+                .where(oauth_access_token.c.token_hash == token_hash(token))
+            ).mappings().first()
         if row is None:
             return None
         if row["revoked_at"] is not None or row["expires_at"] <= datetime.now(timezone.utc).isoformat():
@@ -715,25 +736,47 @@ def create_app(
             return None
         touch_grant(engine, row["grant_id"], _client_ip(request))
         scopes = json.loads(row["scopes"] or "[]")
+        default_kind = "human" if row["client_id"] == FIRST_PARTY_CLIENT_ID else "agent"
+        actor_kind = row.get("grant_actor_kind") or default_kind
         return {"user_id": row["user_id"], "org_id": row["organization_id"], "grant_id": row["grant_id"],
+                "actor_kind": actor_kind,
                 "access": "read_write" if WRITE_SCOPE in scopes else "read"}
 
     def _resolve_auth(request: Request):
         raw = request.headers.get("authorization", "") or request.headers.get("Authorization", "")
         token = raw[7:].strip() if raw.lower().startswith("bearer ") else raw.strip()
+        actor_hint = (request.headers.get("x-hoja-actor", "") or "").strip().lower()
+        request.state.session_id = tenant_context.clean_session_id(request.headers.get("x-hoja-session-id"))
         if raw and token:
             # A valid Authorization header is authoritative; cookies are not consulted.
             key = store.resolve_token(token)
             if key:
                 store.touch_api_key(key["id"], key.get("last_used_at"))
                 request.state.api_key_access = key["access"]
-                # An agent principal's key writes as the agent (HOJA-602-A-3).
-                request.state.actor_kind = key.get("kind") or "human"
+                kind = key.get("kind") or "human"
+                actor_id = key.get("actor_id") or key["user_id"]
+                on_behalf_of = key.get("on_behalf_of")
+                if actor_hint == "agent" and kind != "agent":
+                    kind = "agent"
+                    on_behalf_of = key["user_id"]
+                request.state.actor_kind = kind
+                request.state.actor_id = actor_id
+                request.state.on_behalf_of = on_behalf_of
+                request.state.credential_kind = "api_key"
+                request.state.credential_id = key["id"]
                 return key["user_id"], key["organization_id"], None, False
             oauth = _oauth_graphql_credential(request, token)
             if oauth:
                 request.state.api_key_access = oauth["access"]
                 request.state.oauth_grant = oauth["grant_id"]
+                kind = oauth.get("actor_kind") or "human"
+                if actor_hint == "agent":
+                    kind = "agent"
+                request.state.actor_kind = kind
+                request.state.actor_id = oauth["user_id"]
+                request.state.on_behalf_of = oauth["user_id"] if kind == "agent" else None
+                request.state.credential_kind = "oauth"
+                request.state.credential_id = oauth["grant_id"]
                 return oauth["user_id"], oauth["org_id"], None, False
             # The presented credential did not resolve (e.g. the browser SPA's
             # "session" sentinel). Fall through to the browser session cookie
@@ -746,6 +789,11 @@ def create_app(
                     session["organization_id"], session["user_id"]
                 )
                 request.state.api_key_access = "read_write"
+                request.state.actor_kind = "human"
+                request.state.actor_id = session["user_id"]
+                request.state.on_behalf_of = None
+                request.state.credential_kind = "session"
+                request.state.credential_id = session.get("id")
                 return (
                     session["user_id"],
                     session["organization_id"],
@@ -773,22 +821,32 @@ def create_app(
     def _auth_sync(request: Request):
         """_auth for the read-only /sync endpoints, cached briefly per credential."""
         key = (request.headers.get("authorization") or "", request.cookies.get("hoja_session") or "",
-               request.client.host if request.client else "", request.headers.get("host", "").lower())
+               request.client.host if request.client else "", request.headers.get("host", "").lower(),
+               request.headers.get("x-hoja-actor") or "", request.headers.get("x-hoja-session-id") or "")
         now = time.monotonic()
         hit = sync_auth_cache.get(key)
         if hit is not None and now - hit[0] < _SYNC_AUTH_TTL:
             request.state.api_key_access = hit[2]
-            request.state.actor_kind = hit[3] if len(hit) > 3 else "human"
+            meta = hit[3] if len(hit) > 3 and isinstance(hit[3], dict) else {"actor_kind": hit[3] if len(hit) > 3 else "human"}
+            for attr in ("actor_kind", "actor_id", "on_behalf_of", "credential_kind", "credential_id", "session_id"):
+                setattr(request.state, attr, meta.get(attr))
             # a cache hit skips _auth, so it must scope the request itself
             org_slots.enter(request.scope, hit[1][1])
-            tenant_context.enter(hit[1][1], hit[1][0], request.state.actor_kind)
+            _enter_request_context(request, hit[1][1], hit[1][0])
             return hit[1]
         result = _auth(request)
         if result[0]:
             if len(sync_auth_cache) > 10000:
                 sync_auth_cache.clear()
-            sync_auth_cache[key] = (now, result, getattr(request.state, "api_key_access", "read_write"),
-                                    getattr(request.state, "actor_kind", "human"))
+            meta = {
+                "actor_kind": getattr(request.state, "actor_kind", "human"),
+                "actor_id": getattr(request.state, "actor_id", None),
+                "on_behalf_of": getattr(request.state, "on_behalf_of", None),
+                "credential_kind": getattr(request.state, "credential_kind", None),
+                "credential_id": getattr(request.state, "credential_id", None),
+                "session_id": getattr(request.state, "session_id", None),
+            }
+            sync_auth_cache[key] = (now, result, getattr(request.state, "api_key_access", "read_write"), meta)
         return result
 
     def _credential_slot(uid: str, org: str):
@@ -1161,8 +1219,13 @@ def create_app(
             return
         # register_client has no request; it reads the caller's address from here.
         REQUEST_CLIENT_IP.set(_client_ip(request))
-        REQUEST_META.set({"ip": _client_ip(request), "user_agent": request.headers.get("user-agent"),
-                          "device_name": request.query_params.get("device_name")})
+        REQUEST_META.set({
+            "ip": _client_ip(request),
+            "user_agent": request.headers.get("user-agent"),
+            "device_name": request.query_params.get("device_name"),
+            "actor_hint": (request.headers.get("x-hoja-actor", "") or "").strip().lower() or None,
+            "session_id": tenant_context.clean_session_id(request.headers.get("x-hoja-session-id")),
+        })
         path = scope.get("path", "")
         root = scope.get("root_path", "")
         sub = path[len(root):] if root and path.startswith(root) else path
@@ -1425,7 +1488,7 @@ def create_app(
         ]
         uid, org, cred = await run_in_threadpool(_socket_identity, websocket)
         if uid:  # resolved in a worker thread: its context copy is gone, bind here
-            tenant_context.enter(org, uid, getattr(websocket.state, "actor_kind", "human"))
+            _enter_request_context(websocket, org, uid)
         await websocket.accept(subprotocol=subprotocol)
         if not uid:
             await websocket.close(code=4401)
@@ -1595,10 +1658,11 @@ def create_app(
         observability.annotate(request.scope, transport="graphql")
         uid, org, identity_id, is_browser_session = await run_in_threadpool(_auth, request)
         if uid:  # resolved in a worker thread: its context copy is gone, bind here
-            tenant_context.enter(org, uid, getattr(request.state, "actor_kind", "human"))
+            _enter_request_context(request, org, uid)
             observability.annotate(
                 request.scope, org=org,
-                actor_kind=getattr(request.state, "actor_kind", "human"), actor_id=uid,
+                actor_kind=getattr(request.state, "actor_kind", "human"),
+                actor_id=getattr(request.state, "actor_id", None) or uid,
             )
         refusal = getattr(request.state, "host_refusal", None) if not uid else None
         if refusal:
@@ -3972,6 +4036,43 @@ def create_app(
             payload["expiresAt"] = info["expires_at"]
         return JSONResponse(payload)
 
+    async def trace_ingest(request: Request):
+        from hoja_server import traces as trace_ingest_mod
+
+        uid, org, _identity_id, _browser_session = await run_in_threadpool(_auth, request)
+        if not uid:
+            return _auth_required(request)
+        _enter_request_context(request, org, uid)
+        csrf = _cookie_csrf_error(request, json_only=False)
+        if csrf:
+            return csrf
+        if getattr(request.state, "api_key_access", "read_write") == "read":
+            return JSONResponse({"error": "This credential is read-only."}, status_code=403)
+        raw = await request.body()
+        if len(raw) > uploads.MAX_BYTES:
+            return JSONResponse({"error": "Trace too large (10 MB max)"}, status_code=413)
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "Request body must be a JSON object"}, status_code=400)
+        trace_doc = body.get("trace")
+        explicit_issues = body.get("issues") if isinstance(body.get("issues"), list) else None
+        reason = str(body.get("reason") or "")[:32] or None
+        try:
+            res = await run_in_threadpool(
+                lambda: trace_ingest_mod.ingest_trace(
+                    store, org_id=org, viewer_id=uid, trace=trace_doc,
+                    explicit_issues=explicit_issues, reason=reason,
+                )
+            )
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        except OverflowError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=413)
+        return JSONResponse(res)
+
     async def upload_serve(request: Request):
         uid, org, _identity_id, _browser_session = _auth(request)
         if not uid:
@@ -4050,7 +4151,7 @@ def create_app(
     async def sync_bootstrap(request: Request):
         uid, org, identity_id, is_browser = await run_in_threadpool(_auth_sync, request)
         if uid:  # resolved in a worker thread: its context copy is gone, bind here
-            tenant_context.enter(org, uid, getattr(request.state, "actor_kind", "human"))
+            _enter_request_context(request, org, uid)
         if not uid:
             return _auth_required(request)
         try:
@@ -4126,7 +4227,7 @@ def create_app(
     async def sync_delta(request: Request):
         uid, org, identity_id, is_browser = await run_in_threadpool(_auth_sync, request)
         if uid:  # resolved in a worker thread: its context copy is gone, bind here
-            tenant_context.enter(org, uid, getattr(request.state, "actor_kind", "human"))
+            _enter_request_context(request, org, uid)
         if not uid:
             return _auth_required(request)
         try:
@@ -4556,6 +4657,7 @@ def create_app(
             Route("/api/signup", signup_endpoint, methods=["GET", "POST"]),
             Route("/api/uploads", upload_create, methods=["POST"]),
             Route("/api/uploads/{file_id}", upload_serve, methods=["GET"]),
+            Route("/api/traces", trace_ingest, methods=["POST"]),
             Route("/api/views/{view_id}/export.csv", view_export_csv, methods=["GET"]),
             Route("/sync/bootstrap", sync_bootstrap, methods=["GET"]),
             Route("/sync/delta", sync_delta, methods=["GET"]),

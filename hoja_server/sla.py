@@ -632,8 +632,8 @@ def on_state_change(conn, org_id, issue_id, state_id, at):
         sla_clock.c.id == clock["id"]).values(**values))
 
 
-def on_first_response(conn, org_id, issue_id, responder_id, at):
-    """Record the first comment by someone other than the task's creator."""
+def on_first_response(conn, org_id, issue_id, responder_id, at, *, on_behalf_of: str | None = None):
+    """Record the first comment by someone other than the task's creator or their agents."""
     clock = conn.execute(select(sla_clock).where(
         sla_clock.c.issue_id == issue_id)).first()
     if not clock:
@@ -643,7 +643,12 @@ def on_first_response(conn, org_id, issue_id, responder_id, at):
         return
     creator = conn.execute(select(issue.c.creator_id).where(
         issue.c.id == issue_id)).scalar()
-    if responder_id == creator:
+    if on_behalf_of is None:
+        from hoja_server import tenant_context
+
+        on_behalf_of = tenant_context.current_actor()[2]
+    principal = on_behalf_of or responder_id
+    if principal == creator or responder_id == creator:
         return
     conn.execute(sla_clock.update().where(sla_clock.c.id == clock["id"]).values(
         first_responded_at=at, updated_at=at))

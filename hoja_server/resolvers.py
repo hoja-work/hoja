@@ -1554,17 +1554,32 @@ def m_workspace_update(_, info, input):
 
 
 @mutation.field("apiKeyCreate")
-def m_api_key_create(_, info, label, access="read_write", expiresAt=None):
+def m_api_key_create(_, info, label, access="read_write", expiresAt=None, actorKind="agent", agentMemberId=None):
     store, _w, org, uid = _ctx(info)
-    created = store.create_api_key(org, uid, label, access, expiresAt)
+    created = store.create_api_key(org, uid, label, access, expiresAt,
+                                   actor_kind=actorKind or "agent",
+                                   agent_member_id=agentMemberId)
     if not created:
         return {"success": False, "apiKey": None, "secret": None}
     metadata, secret = created
     # Audit after the key exists; never the secret, only what the admin chose.
     audit.record_request(store, info, user_id=uid, action="api_key.create",
                          target_kind="api_key", target_id=metadata["id"],
-                         detail={"label": metadata["label"], "access": metadata["access"]})
+                         detail={"label": metadata["label"], "access": metadata["access"],
+                                 "actorKind": metadata.get("actorKind")})
     return {"success": True, "apiKey": metadata, "secret": secret}
+
+
+@mutation.field("apiKeyUpdate")
+def m_api_key_update(_, info, id, actorKind=None, agentMemberId=None):
+    store, _w, org, uid = _ctx(info)
+    updated = store.update_api_key(org, uid, id, actor_kind=actorKind, agent_member_id=agentMemberId)
+    if not updated:
+        return {"success": False, "apiKey": None, "secret": None}
+    audit.record_request(store, info, user_id=uid, action="api_key.update",
+                         target_kind="api_key", target_id=id,
+                         detail={"actorKind": updated.get("actorKind")})
+    return {"success": True, "apiKey": updated, "secret": None}
 
 
 @mutation.field("apiKeyRevoke")

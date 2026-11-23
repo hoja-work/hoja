@@ -56,6 +56,7 @@ def consent_page(
     switch_account_url: str,
     other_hosts: list[tuple[str, str]] | None = None,
     returns_label: str = "Returns to",
+    default_actor_kind: str = "agent",
 ) -> str:
     """The approval screen. ``workspaces`` items carry ``id``, ``name``."""
     selected = next((w for w in workspaces if w["id"] == selected_org), workspaces[0])
@@ -108,6 +109,16 @@ def consent_page(
         )
         body.append("<input type=\"hidden\" name=\"access\" value=\"read\">")
         body.append(f"<p class=\"note\">{_e(reason)}</p>")
+    agent_checked = " checked" if default_actor_kind == "agent" else ""
+    human_checked = " checked" if default_actor_kind != "agent" else ""
+    body.append(
+        "<fieldset><legend>Identity</legend>"
+        f"<label class=\"choice\"><input type=\"radio\" name=\"actor_kind\" value=\"agent\"{agent_checked}>"
+        "<span>Agent on your behalf</span><small>Writes are marked as an agent acting on your behalf.</small></label>"
+        f"<label class=\"choice\"><input type=\"radio\" name=\"actor_kind\" value=\"human\"{human_checked}>"
+        "<span>You directly</span><small>Writes are marked as coming directly from you.</small></label>"
+        "</fieldset>"
+    )
     body.append(
         "<div class=\"actions two\">"
         "<button class=\"secondary\" type=\"submit\" name=\"decision\" value=\"deny\">Deny</button>"

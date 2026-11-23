@@ -40,7 +40,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
-CURRENT_SCHEMA_REVISION = 97
+CURRENT_SCHEMA_REVISION = 98
 
 log = logging.getLogger(__name__)
 
@@ -181,6 +181,9 @@ api_key = Table(
     Column("organization_id", String, ForeignKey("organization.id"), nullable=False),
     Column("created_at", String),
     Column("revoked_at", String),
+    # Revision 98: explicit principal kind ("agent" | "human") and optional bound agent user.
+    Column("actor_kind", String),
+    Column("agent_user_id", String, ForeignKey("user.id")),
 )
 
 password_credential = Table(
@@ -406,6 +409,8 @@ oauth_pending = Table(
     # Revision 89: what the person approves is shown with the device the app
     # named (``device_name``) and the browser that started the request.
     Column("device_label", String), Column("user_agent", Text),
+    # Revision 98: whether this grant acts as an "agent" on the user's behalf or as "human".
+    Column("actor_kind", String),
 )
 
 # Revision 89: one authorized app per (person, workspace, client, device label).
@@ -427,6 +432,7 @@ oauth_grant = Table(
     Column("last_used_at", String),
     Column("last_used_ip", String),
     Column("revoked_at", String),
+    Column("actor_kind", String),
 )
 
 # Revision 89: RFC 8628 device authorization. The device code is stored only as
@@ -451,6 +457,7 @@ oauth_device_code = Table(
     Column("grant_id", String),
     Column("created_at", String, nullable=False),
     Column("expires_at", String, nullable=False, index=True),
+    Column("actor_kind", String),
 )
 
 oauth_access_token = Table(
@@ -1339,6 +1346,11 @@ change_event = Table(
     Column("actor_id", String),
     # For an agent turn: the human whose request the agent is acting on.
     Column("on_behalf_of", String),
+    # Revision 98: which credential ("api_key" | "oauth" | "session" | "runner" | "agent")
+    # and credential row id produced the write, plus optional agent session correlation id.
+    Column("credential_kind", String),
+    Column("credential_id", String),
+    Column("session_id", String, index=True),
 )
 
 # Append-only audit trail (revision 65, HOJA-602-A-8 / WP05). Deliberately
@@ -1901,6 +1913,8 @@ attachment = Table(
     # create time so a client can choose a renderer without probing the URL.
     Column("content_type", String),
     Column("created_at", String),
+    # Revision 98: optional agent session correlation id for idempotent trace upserts.
+    Column("session_id", String, index=True),
 )
 
 project = Table(
@@ -2581,8 +2595,11 @@ _CHANGE_CAPTURE = (
 # single-tenant local mode, where the actor is always the local user.
 _ACTOR_PG = ("NULLIF(current_setting('hoja.actor_kind', true), ''), "
              "NULLIF(current_setting('hoja.actor_id', true), ''), "
-             "NULLIF(current_setting('hoja.on_behalf_of', true), '')")
-_ACTOR_SQLITE = "NULL, NULL, NULL"
+             "NULLIF(current_setting('hoja.on_behalf_of', true), ''), "
+             "NULLIF(current_setting('hoja.credential_kind', true), ''), "
+             "NULLIF(current_setting('hoja.credential_id', true), ''), "
+             "NULLIF(current_setting('hoja.session_id', true), '')")
+_ACTOR_SQLITE = "NULL, NULL, NULL, NULL, NULL, NULL"
 
 
 def _change_trigger_sql(dialect: str, table_name: str, entity: str, pk: str,
@@ -2596,7 +2613,7 @@ def _change_trigger_sql(dialect: str, table_name: str, entity: str, pk: str,
         pk_value = f"{row}.{pk}"
         body = (
             "INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at, "
-            "actor_kind, actor_id, on_behalf_of) "
+            "actor_kind, actor_id, on_behalf_of, credential_kind, credential_id, session_id) "
             f"VALUES ({org}, '{entity}', CAST({pk_value} AS TEXT), '{label}', "
             f"{team_value}, strftime('%Y-%m-%dT%H:%M:%fZ','now'), {_ACTOR_SQLITE});"
         )
@@ -2622,13 +2639,13 @@ def _postgres_change_trigger_sql(table_name: str, entity: str, pk: str,
 BEGIN
   IF TG_OP = 'DELETE' THEN
     INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at,
-                              actor_kind, actor_id, on_behalf_of)
+                              actor_kind, actor_id, on_behalf_of, credential_kind, credential_id, session_id)
     VALUES ({org_old}, '{entity}', CAST({pk_old} AS TEXT), 'delete', {team_old},
             to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"'), {_ACTOR_PG});
     RETURN OLD;
   END IF;
   INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at,
-                            actor_kind, actor_id, on_behalf_of)
+                            actor_kind, actor_id, on_behalf_of, credential_kind, credential_id, session_id)
   VALUES ({org_new}, '{entity}', CAST({pk_new} AS TEXT),
           CASE WHEN TG_OP = 'INSERT' THEN 'create' ELSE 'update' END, {team_new},
           to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"'), {_ACTOR_PG});
@@ -2671,7 +2688,7 @@ def _apply_issue_link_capture(conn):
                     f"CREATE TRIGGER IF NOT EXISTS trg_chg_{table_name}_{op} "
                     f"AFTER {op.upper()} ON {table_name} FOR EACH ROW BEGIN "
                     "INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at, "
-                    "actor_kind, actor_id, on_behalf_of) "
+                    "actor_kind, actor_id, on_behalf_of, credential_kind, credential_id, session_id) "
                     "SELECT organization_id, 'issue', id, 'update', team_id, "
                     f"strftime('%Y-%m-%dT%H:%M:%fZ','now'), {_ACTOR_SQLITE} "
                     f"FROM issue WHERE id = {row}.issue_id; END;"
@@ -2681,9 +2698,10 @@ def _apply_issue_link_capture(conn):
 DECLARE v_issue_id TEXT;
 BEGIN
   v_issue_id := CASE WHEN TG_OP = 'DELETE' THEN OLD.issue_id ELSE NEW.issue_id END;
-  INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at)
+  INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at,
+                            actor_kind, actor_id, on_behalf_of, credential_kind, credential_id, session_id)
   SELECT i.organization_id, 'issue', i.id, 'update', i.team_id,
-         to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"')
+         to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"'), {_ACTOR_PG}
   FROM issue i WHERE i.id = v_issue_id;
   RETURN NULL;
 END;
@@ -2717,7 +2735,7 @@ def _pg_publish_body(org: str, entity: str, entity_id: str, action: str, team: s
   IF v_org IS NULL OR NOT EXISTS (SELECT 1 FROM organization WHERE id = v_org) THEN RETURN NULL; END IF;
   PERFORM pg_advisory_xact_lock(hashtext('hoja.change:' || v_org));
   INSERT INTO change_event (organization_id, entity, entity_id, action, team_id, created_at, recipient_id,
-                            actor_kind, actor_id, on_behalf_of)
+                            actor_kind, actor_id, on_behalf_of, credential_kind, credential_id, session_id)
   VALUES (v_org, {entity}, {entity_id}, {action}, {team}, {_PG_CHANGE_TS}, {recipient}, {_ACTOR_PG})
   RETURNING seq INTO v_seq;
   PERFORM pg_notify('{CHANGE_NOTIFY_CHANNEL}',
@@ -2741,16 +2759,23 @@ def _install_sqlite_inbox_triggers(conn) -> None:
             f"CREATE TRIGGER trg_chg_inbox_notification_{label} AFTER {op.upper()} ON inbox_notification "
             "FOR EACH ROW BEGIN INSERT INTO change_event "
             "(organization_id, entity, entity_id, action, team_id, created_at, recipient_id, "
-            "actor_kind, actor_id, on_behalf_of) "
+            "actor_kind, actor_id, on_behalf_of, credential_kind, credential_id, session_id) "
             f"VALUES ({row}.organization_id, 'notification', CAST({row}.id AS TEXT), '{label}', NULL, "
             f"strftime('%Y-%m-%dT%H:%M:%fZ','now'), {row}.recipient_id, {_ACTOR_SQLITE}); END;")
+
+
+def _ensure_change_event_actor_columns(conn) -> None:
+    captured = {c["name"] for c in inspect(conn).get_columns("change_event")}
+    for name in ("recipient_id", "actor_kind", "actor_id", "on_behalf_of",
+                 "credential_kind", "credential_id", "session_id"):
+        if name not in captured:
+            conn.exec_driver_sql(f"ALTER TABLE change_event ADD COLUMN {name} VARCHAR")
 
 
 def _apply_realtime_v2_capture(conn):
     """Recipient-scoped notification events; on PostgreSQL also deferred,
     commit-ordered capture with LISTEN/NOTIFY wakeups."""
-    if "recipient_id" not in {c["name"] for c in inspect(conn).get_columns("change_event")}:
-        conn.exec_driver_sql("ALTER TABLE change_event ADD COLUMN recipient_id VARCHAR")
+    _ensure_change_event_actor_columns(conn)
     if conn.dialect.name == "sqlite":
         # SQLite serializes writers, so its seqs are already commit-ordered; only
         # notification events change, to carry their recipient.
@@ -2761,9 +2786,10 @@ def _apply_realtime_v2_capture(conn):
         conn.exec_driver_sql(
             "CREATE TRIGGER trg_chg_team_update AFTER UPDATE ON team FOR EACH ROW "
             "WHEN OLD.issue_counter IS NEW.issue_counter BEGIN INSERT INTO change_event "
-            "(organization_id, entity, entity_id, action, team_id, created_at, actor_kind, actor_id, on_behalf_of) "
+            "(organization_id, entity, entity_id, action, team_id, created_at, "
+            "actor_kind, actor_id, on_behalf_of, credential_kind, credential_id, session_id) "
             "VALUES (NEW.organization_id, 'team', CAST(NEW.id AS TEXT), 'update', NEW.id, "
-            "strftime('%Y-%m-%dT%H:%M:%fZ','now'), NULL, NULL, NULL); END;")
+            f"strftime('%Y-%m-%dT%H:%M:%fZ','now'), {_ACTOR_SQLITE}); END;")
         return
     if conn.dialect.name != "postgresql":
         raise RuntimeError(f"Realtime capture is not implemented for {conn.dialect.name}")
@@ -3955,6 +3981,29 @@ def _apply_workspace_defaults(conn):
     workspace_default.create(conn, checkfirst=True)
 
 
+def _apply_actor_delegation_and_traces(conn):
+    """Revision 98 (HOJA-741-A-1 / HOJA-743): principal/delegation on credentials,
+    credential & session correlation on ``change_event``, and ``attachment.session_id``."""
+    api_cols = {c["name"] for c in inspect(conn).get_columns("api_key")}
+    for name in ("actor_kind", "agent_user_id"):
+        if name not in api_cols:
+            conn.exec_driver_sql(f"ALTER TABLE api_key ADD COLUMN {name} VARCHAR")
+    for tbl in ("oauth_pending", "oauth_grant", "oauth_device_code"):
+        cols = {c["name"] for c in inspect(conn).get_columns(tbl)}
+        if "actor_kind" not in cols:
+            conn.exec_driver_sql(f"ALTER TABLE {tbl} ADD COLUMN actor_kind VARCHAR")
+    att_cols = {c["name"] for c in inspect(conn).get_columns("attachment")}
+    if "session_id" not in att_cols:
+        conn.exec_driver_sql("ALTER TABLE attachment ADD COLUMN session_id VARCHAR")
+    conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_attachment_session_id ON attachment (session_id)")
+    _ensure_change_event_actor_columns(conn)
+    conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_change_event_session_id ON change_event (session_id)")
+    _apply_realtime_v2_capture(conn)
+    if conn.dialect.name == "sqlite":
+        _apply_realtime_capture(conn)
+        _apply_issue_link_capture(conn)
+
+
 def _apply_agent_run_log(conn):
     """``agent_run_log``: the per-run timeline GraphQL serves (HOJA-602)."""
     agent_run_log.create(conn, checkfirst=True)
@@ -4348,6 +4397,9 @@ _MIGRATIONS = {
     # 97: workspace defaults (HOJA-742): notification and agent-policy defaults that a
     # workspace template sets.
     97: _apply_workspace_defaults,
+    # 98: principal/delegation attribution on api_key + oauth_grant, credential/session
+    # columns on change_event, and session_id on attachment for idempotent traces.
+    98: _apply_actor_delegation_and_traces,
 }
 
 

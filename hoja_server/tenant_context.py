@@ -49,8 +49,11 @@ _system: ContextVar[bool] = ContextVar("hoja_tenant_system", default=False)
 # (SQLite) database and every pre-agent call path keeps getting.
 _actor: ContextVar[tuple[str | None, str | None, str | None]] = ContextVar(
     "hoja_tenant_actor", default=(None, None, None))
+_credential: ContextVar[tuple[str | None, str | None, str | None]] = ContextVar(
+    "hoja_tenant_credential", default=(None, None, None))
 # user.kind values: "human", "bot" (an extension's identity), "agent" (revision 64).
 ACTOR_KINDS = ("human", "bot", "agent")
+_SAFE_SESSION_RE = None
 
 # Paths that run before a tenant is known, or that are tenant-agnostic by
 # nature. They see every row, exactly as before row-level security. Keep this
@@ -67,6 +70,22 @@ SYSTEM_PATHS = frozenset({"/health", "/ready"})
 _SET = ("SELECT set_config('hoja.org_id', %s, true), set_config('hoja.system', %s, true), "
         "set_config('hoja.actor_kind', %s, true), set_config('hoja.actor_id', %s, true), "
         "set_config('hoja.on_behalf_of', %s, true)")
+_SET_CRED = ("SELECT set_config('hoja.credential_kind', %s, true), "
+             "set_config('hoja.credential_id', %s, true), "
+             "set_config('hoja.session_id', %s, true)")
+
+
+def clean_session_id(value: str | None) -> str | None:
+    """Validate a client-supplied correlation session id, returning None if invalid."""
+    if not value or not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    if not cleaned or len(cleaned) > 128:
+        return None
+    for ch in cleaned:
+        if not (ch.isalnum() or ch in "._:-"):
+            return None
+    return cleaned
 
 
 def bind(org: str | None) -> None:
@@ -82,6 +101,10 @@ def current_actor() -> tuple[str | None, str | None, str | None]:
     return _actor.get()
 
 
+def current_credential() -> tuple[str | None, str | None, str | None]:
+    return _credential.get()
+
+
 def set_actor(kind: str, actor_id: str, on_behalf_of: str | None = None) -> None:
     """Scope the rest of the current context's writes to ``actor_id`` (mirrors ``bind``)."""
     if kind not in ACTOR_KINDS:
@@ -91,19 +114,31 @@ def set_actor(kind: str, actor_id: str, on_behalf_of: str | None = None) -> None
     _actor.set((kind, actor_id, on_behalf_of))
 
 
-def enter(org: str | None, uid: str, kind: str = "human") -> None:
+def set_credential(credential_kind: str | None = None, credential_id: str | None = None,
+                   session_id: str | None = None) -> None:
+    """Record the credential and correlation session for this context's writes."""
+    _credential.set((credential_kind or None, credential_id or None, clean_session_id(session_id)))
+
+
+def enter(org: str | None, uid: str, kind: str = "human", *,
+          actor_id: str | None = None, on_behalf_of: str | None = None,
+          credential_kind: str | None = None, credential_id: str | None = None,
+          session_id: str | None = None) -> None:
     """Scope the rest of the request to its tenant and to whoever authenticated.
 
-    ``kind='agent'`` when the credential names an agent principal (a runner or an
-    agent's own MCP key), so its writes are attributed to the agent, not to a
-    person it never was.
+    ``kind='agent'`` when the credential names an agent principal (a runner, an
+    agent-scoped API key, or a delegated OAuth/MCP client), so its writes are
+    attributed to the agent with ``on_behalf_of`` naming the sponsoring human.
     """
     bind(org)
-    set_actor(kind, uid)
+    set_actor(kind, actor_id or uid, on_behalf_of)
+    set_credential(credential_kind, credential_id, session_id)
 
 
 @contextmanager
-def actor(kind: str, actor_id: str, on_behalf_of: str | None = None) -> Iterator[None]:
+def actor(kind: str, actor_id: str, on_behalf_of: str | None = None, *,
+          credential_kind: str | None = None, credential_id: str | None = None,
+          session_id: str | None = None) -> Iterator[None]:
     """Attribute every change in this context to ``actor_id`` (revision 64).
 
     An agent turn runs with ``kind='agent'``, the agent's user id, and the human
@@ -115,10 +150,17 @@ def actor(kind: str, actor_id: str, on_behalf_of: str | None = None) -> Iterator
     exactly the unattributable row this change exists to prevent.
     """
     token = _actor.set((None, None, None))
+    cred_token = _credential.set((None, None, None)) if any(
+        v is not None for v in (credential_kind, credential_id, session_id)
+    ) else None
     try:
         set_actor(kind, actor_id, on_behalf_of)
+        if cred_token is not None:
+            set_credential(credential_kind, credential_id, session_id)
         yield
     finally:
+        if cred_token is not None:
+            _credential.reset(cred_token)
         _actor.reset(token)
 
 
@@ -248,12 +290,14 @@ def install(engine: Engine) -> None:
     def _set_tenant(conn: Any) -> None:
         org, sys_ = current()
         actor_kind, actor_id, on_behalf_of = current_actor()
+        cred_kind, cred_id, session_id = current_credential()
         # The raw DBAPI cursor: psycopg opens the transaction implicitly on this
         # first statement, so the settings are local to exactly this transaction.
         cursor = conn.connection.dbapi_connection.cursor()
         try:
             cursor.execute(_SET, (org or "", "on" if sys_ else "",
                                   actor_kind or "", actor_id or "", on_behalf_of or ""))
+            cursor.execute(_SET_CRED, (cred_kind or "", cred_id or "", session_id or ""))
         finally:
             cursor.close()
 

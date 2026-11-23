@@ -689,23 +689,19 @@ def build_tools(schema: GraphQLSchema, principal: Callable[[bool], dict]) -> lis
 def _ops_actor(context: dict | None) -> tuple[str | None, str | None]:
     """Who an MCP call acts as, in the operations vocabulary.
 
-    ``agent`` and ``api_key`` are the two non-human credentials the MCP endpoint
-    accepts; an OAuth access token placed by a person is ``human``. The id is the
-    identity the credential named — never an email, never a token.
+    Always returns one of ``ACTOR_KINDS`` (``human``, ``bot``, ``agent``) —
+    never a credential type like ``api_key``.
     """
     if not isinstance(context, dict):
         return None, None
     member = context.get("agent_member_id")
     if member:
-        # An agent row is its own principal; the human who delegated is not in
-        # this request, so no ``on_behalf_of`` is invented here.
         return "agent", member
     kind, who, _behalf = tenant_context.current_actor()
     actor_id = who or context.get("user_id")
-    if context.get("credential_kind") == "api_key":
-        return "api_key", actor_id
-    if kind in ("bot", "agent"):
-        return kind, actor_id
+    ctx_kind = context.get("actor_kind") or kind
+    if ctx_kind in ("bot", "agent"):
+        return ctx_kind, actor_id
     return "human", actor_id
 
 

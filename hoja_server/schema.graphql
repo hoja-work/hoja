@@ -22,6 +22,11 @@ type ApiKey {
   lastUsedAt: DateTime
   createdAt: DateTime
   revokedAt: DateTime
+  "Who uses this key: agent | human (null on keys created before attribution tracking)."
+  actorKind: String
+  agentUserId: ID
+  agentMemberId: ID
+  agentName: String
 }
 
 type ApiKeyPayload {
@@ -158,7 +163,8 @@ type Query {
 }
 
 type Mutation {
-  apiKeyCreate(label: String!, access: String = "read_write", expiresAt: DateTime): ApiKeyPayload
+  apiKeyCreate(label: String!, access: String = "read_write", expiresAt: DateTime, actorKind: String = "agent", agentMemberId: String): ApiKeyPayload
+  apiKeyUpdate(id: String!, actorKind: String, agentMemberId: String): ApiKeyPayload
   apiKeyRevoke(id: String!): Boolean!
   userPreferenceSet(key: String!, value: String!): UserPreferencesPayload!
   profileNameUpdate(name: String!): UserPayload
