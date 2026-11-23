@@ -2133,7 +2133,7 @@ def build_schema():
         agent_runners.query, agent_runners.runner_type, agent_runners.agent_lease_type,
         agent_runner_admin.query, agent_runner_admin.mutation,
         agent_ops.query, agent_ops.mutation,
-        project_repos.mutation, project_repos.project_type,
+        project_repos.query, project_repos.mutation, project_repos.project_type,
         tailnet_ops.query, tailnet_ops.mutation,
         connect_endpoints.query, connect_endpoints.mutation,
         connect_endpoints.connect_endpoint_type,

@@ -69,6 +69,9 @@ export type AgentDraft = {
 /** What the issue page's Delegate picker needs: `user.id` (the value `delegateId` holds) and name. */
 export type AgentChoice = {id: string; name: string};
 
+/** One repository choice offered by the project repository picker. */
+export type ProjectRepositoryChoice = {fullName: string; url: string | null; source: string};
+
 export type AgentsAdapter = {
   /* -- server-backed: GraphQL, WP04 ---------------------------------------------------------- */
   listAgents(): Promise<Agent[]>;
@@ -115,6 +118,7 @@ export type AgentsAdapter = {
   revokeTailnetMachine(deviceId: string): Promise<void>;
   /** The repository a project's agent tasks work in (null: none). */
   getProjectRepository(projectId: string): Promise<string | null>;
+  listProjectRepositoryChoices(): Promise<ProjectRepositoryChoice[]>;
   setProjectRepository(projectId: string, repository: string | null): Promise<string | null>;
   updateRunAccess(agentId: string, patch: {teams?: string[]; secrets?: string[];
     repos?: {repo: string; branches: string[]}[]}): Promise<void>;
@@ -941,6 +945,12 @@ function createGraphqlAdapter(fallback: AgentsAdapter): AgentsAdapter {
       return data.project?.repository ?? null;
     },
 
+    async listProjectRepositoryChoices() {
+      const data = await request<{projectRepositoryChoices: ProjectRepositoryChoice[]}>(
+        `query ProjectRepoChoices { projectRepositoryChoices { fullName url source } }`);
+      return data.projectRepositoryChoices || [];
+    },
+
     async setProjectRepository(projectId: string, repository: string | null) {
       const data = await request<{projectRepositorySet: {repository: string | null} | null}>(
         `mutation ProjectRepoSet($id: String!, $repo: String) {
@@ -1277,6 +1287,7 @@ function createFallbackAdapter(): AgentsAdapter {
     async getRunAccess() { return serverOnly('the run policy'); },
     async enableAgents() { return serverOnly('turning Agents on'); },
     async getProjectRepository() { return serverOnly('a project repository'); },
+    async listProjectRepositoryChoices() { return serverOnly('project repository choices'); },
     async getTailnet() { return serverOnly('Tailscale'); },
     async connectTailnet() { return serverOnly('Tailscale'); },
     async planTailnetSetup() { return serverOnly('Tailscale'); },

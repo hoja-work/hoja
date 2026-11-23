@@ -89,12 +89,31 @@ export async function toggleViewFavorite(id: string): Promise<boolean> {
 }
 
 /* ------------------------------ filter translation ------------------------------
- * The views page and the team list still offer a text box and a status picker. Those two
- * fields are all a legacy browser view stored, so they map onto the canonical filter tree
- * the server validates: a title/identifier search plus one status predicate.
+ * Saved views map form fields onto the canonical filter tree the server validates
+ * (hoja_server/views.py): text search, status, and (for tasks) priority, assignee,
+ * and project predicates.
  */
 
-export function filtersFromFields(kind: 'issue' | 'project', query: string, state: string): ViewDocument {
+export type ViewFilterFields = {
+  query: string;
+  state: string;
+  priority: string;
+  assignee: string;
+  project: string;
+};
+
+export type ViewFilterExtras = {
+  priority?: string;
+  assignee?: string;
+  project?: string;
+};
+
+export function filtersFromFields(
+  kind: 'issue' | 'project',
+  query: string,
+  state: string,
+  extra?: ViewFilterExtras,
+): ViewDocument {
   const predicates: ViewDocument[] = [];
   const text = query.trim();
   if (text) {
@@ -103,14 +122,27 @@ export function filtersFromFields(kind: 'issue' | 'project', query: string, stat
       : {name: {contains: text}});
   }
   if (state) predicates.push({state: {is: state}});
+  if (kind === 'issue' && extra) {
+    if (extra.priority !== undefined && extra.priority !== '') {
+      const parsed = Number(extra.priority);
+      if (Number.isInteger(parsed) && parsed >= 0 && parsed <= 4) {
+        predicates.push({priority: {is: parsed}});
+      }
+    }
+    if (extra.assignee) predicates.push({assignee: {is: extra.assignee}});
+    if (extra.project) predicates.push({project: {is: extra.project}});
+  }
   if (!predicates.length) return {};
   return predicates.length === 1 ? predicates[0] : {and: predicates};
 }
 
-export function fieldsFromFilters(filters: ViewDocument): {query: string; state: string} {
+export function fieldsFromFilters(filters: ViewDocument): ViewFilterFields {
   const predicates = [filters, ...((filters.and as ViewDocument[] | undefined) || [])];
   let query = '';
   let state = '';
+  let priority = '';
+  let assignee = '';
+  let project = '';
   for (const predicate of predicates) {
     if (!predicate || typeof predicate !== 'object') continue;
     const title = predicate.title as {contains?: string} | undefined;
@@ -119,8 +151,14 @@ export function fieldsFromFilters(filters: ViewDocument): {query: string; state:
     if (name?.contains) query = name.contains;
     const status = predicate.state as {is?: string} | undefined;
     if (status?.is) state = status.is;
+    const prio = predicate.priority as {is?: number} | undefined;
+    if (typeof prio?.is === 'number' && Number.isInteger(prio.is)) priority = String(prio.is);
+    const asgn = predicate.assignee as {is?: string} | undefined;
+    if (asgn?.is) assignee = asgn.is;
+    const proj = predicate.project as {is?: string} | undefined;
+    if (proj?.is) project = proj.is;
   }
-  return {query, state};
+  return {query, state, priority, assignee, project};
 }
 
 /* --------------------------- one-time local migration --------------------------- */

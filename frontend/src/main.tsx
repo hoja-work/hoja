@@ -94,11 +94,13 @@ import {
 } from "./dialogs";
 import {
   createView,
+  deleteView,
   fieldsFromFilters,
   filtersFromFields,
   listViews,
   migrateLegacyViews,
   toggleViewFavorite,
+  updateView,
   type ServerView,
 } from "./views";
 import { AgentChatPage } from "./AgentChatPage";
@@ -331,6 +333,7 @@ export type Project = {
   startDate?: string;
   targetDate?: string;
   health?: string;
+  viewerSubscribed?: boolean;
   teams?: { nodes: { id: string; name: string; key: string }[] };
   lead?: { name?: string };
 };
@@ -381,6 +384,7 @@ export type PulsePost = {
     health?: string;
     progress?: number;
     targetDate?: string;
+    viewerSubscribed?: boolean;
     lead?: { name?: string };
   };
   comments?: { nodes: PulseComment[] };
@@ -2929,6 +2933,10 @@ function App() {
             location.pathname.split("/")[3]?.toLowerCase(),
         )}
         onIssue={openIssue}
+        onOpenProject={(p) => {
+          setActiveProject(p);
+          navigate("Project detail", `/workspace/project/${p.id}`);
+        }}
         onNavigate={navigate}
         revision={revision}
       />
@@ -3193,6 +3201,10 @@ function App() {
         path={window.location.pathname}
         onNavigate={navigate}
         onSelect={openIssue}
+        onOpenProject={(p) => {
+          setActiveProject(p);
+          navigate("Project detail", `/workspace/project/${p.id}`);
+        }}
         favoriteOnly
         revision={revision}
       />
@@ -3207,6 +3219,10 @@ function App() {
         path={window.location.pathname}
         onNavigate={navigate}
         onSelect={openIssue}
+        onOpenProject={(p) => {
+          setActiveProject(p);
+          navigate("Project detail", `/workspace/project/${p.id}`);
+        }}
         revision={revision}
       />
     ) : view === "Reviews" ? (
@@ -4339,7 +4355,7 @@ import {
 } from "./projectStore";
 import "./mobile-touch.css";
 const PROJECT_FIELDS = `id name description state progress startDate targetDate health lead{name} teams{nodes{id name key}}`;
-const PULSE_FIELDS = `id status body createdAt progress health actor{id name avatarSeed} project{id name health progress targetDate lead{name}} comments(first:20){nodes{id body createdAt user{id name avatarSeed}}}`;
+const PULSE_FIELDS = `id status body createdAt progress health actor{id name avatarSeed} project{id name health progress targetDate viewerSubscribed lead{name}} comments(first:20){nodes{id body createdAt user{id name avatarSeed}}}`;
 const pulseKey = (meta: SyncMeta | null) =>
   meta ? `pulse:${meta.workspace.id}:${meta.viewer.id || ""}` : null;
 const upsertFirst = <T extends { id: string }>(rows: T[], row: T) =>
@@ -4570,6 +4586,127 @@ function PulsePage({
     }
   };
   const tab = selectedTab;
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [composeProjectId, setComposeProjectId] = useState(
+    () => projects[0]?.id || "",
+  );
+  const [composeHealth, setComposeHealth] = useState<
+    "onTrack" | "atRisk" | "offTrack"
+  >("onTrack");
+  const [composeBody, setComposeBody] = useState("");
+  const [composeBusy, setComposeBusy] = useState(false);
+  const [composeError, setComposeError] = useState("");
+  useEffect(() => {
+    if (!composeProjectId && projects[0]?.id) {
+      setComposeProjectId(projects[0].id);
+    }
+  }, [composeProjectId, projects]);
+  const publishUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const project =
+      projectById.get(composeProjectId) ||
+      projects.find((p) => p.id === composeProjectId);
+    const body = composeBody.trim();
+    if (!project || !body || composeBusy) return;
+    const statusMap: Record<"onTrack" | "atRisk" | "offTrack", string> = {
+      onTrack: "on track",
+      atRisk: "at risk",
+      offTrack: "off track",
+    };
+    const healthStatus = statusMap[composeHealth];
+    const key = pulseKey(meta);
+    const temp: PulsePost = {
+      id: `optimistic:${crypto.randomUUID()}`,
+      body,
+      status: healthStatus,
+      health: healthStatus,
+      createdAt: new Date().toISOString(),
+      progress: project.progress,
+      actor: { id: meta?.viewer.id || "", name: meta?.viewer.name },
+      project: {
+        id: project.id,
+        name: project.name,
+        health: healthStatus,
+        progress: project.progress,
+        targetDate: project.targetDate,
+        viewerSubscribed: project.viewerSubscribed,
+        lead: project.lead,
+      },
+    };
+    const settle = key
+      ? optimisticPage<PulsePost>(key, (r) => [temp, ...r])
+      : null;
+    setComposeBusy(true);
+    setComposeError("");
+    try {
+      const d = await gql(
+        `mutation($input:ProjectUpdateCreateInput!){projectUpdateCreate(input:$input){success projectUpdate{${PULSE_FIELDS}}}}`,
+        {
+          input: {
+            projectId: project.id,
+            body,
+            status: healthStatus,
+            health: healthStatus,
+          },
+        },
+      );
+      if (
+        !d.projectUpdateCreate?.success ||
+        !d.projectUpdateCreate.projectUpdate
+      )
+        throw Error("Could not publish update.");
+      const created: PulsePost = d.projectUpdateCreate.projectUpdate;
+      settle?.((r) => upsertFirst(r, created));
+      setComposeBody("");
+      setComposeOpen(false);
+    } catch (err) {
+      settle?.();
+      setComposeError(
+        err instanceof Error ? err.message : "Could not publish update.",
+      );
+    } finally {
+      setComposeBusy(false);
+    }
+  };
+  const replyCountOf = useCallback(
+    (post: PulsePost) =>
+      (post.comments?.nodes?.length || 0) +
+      (commentExtra[post.id]?.length || 0),
+    [commentExtra],
+  );
+  const forMeMatches = useMemo(
+    () =>
+      posts.filter((post) => {
+        const live = projectById.get(post.project.id);
+        const followed = Boolean(
+          post.project.viewerSubscribed || live?.viewerSubscribed,
+        );
+        const leads = Boolean(
+          meta?.viewer.name &&
+          (post.project.lead?.name || live?.lead?.name) === meta.viewer.name,
+        );
+        const authored = Boolean(
+          meta?.viewer.id && post.actor?.id === meta.viewer.id,
+        );
+        return followed || leads || authored;
+      }),
+    [posts, projectById, meta?.viewer.id, meta?.viewer.name],
+  );
+  const forMeFallback =
+    tab === "For me" && posts.length > 0 && forMeMatches.length === 0;
+  const visiblePosts = useMemo(() => {
+    if (tab === "For me") {
+      return forMeMatches.length > 0 ? forMeMatches : posts;
+    }
+    if (tab === "Popular") {
+      return [...posts].sort((a, b) => {
+        const diff = replyCountOf(b) - replyCountOf(a);
+        if (diff !== 0) return diff;
+        return b.createdAt.localeCompare(a.createdAt);
+      });
+    }
+    return posts;
+  }, [tab, posts, forMeMatches, replyCountOf]);
   useEffect(() => {
     const onPop = () =>
       setSelectedTab(
@@ -4631,17 +4768,34 @@ function PulsePage({
               Pulse
             </h1>
           </div>
-          <button
-            className="flex items-center pt-1.25 pr-1.75 pb-1.25 pl-1.75 bg-transparent text-muted hover:bg-subtle cursor-not-allowed opacity-50 gap-(--ds-group-bar-gap) rounded-(--ds-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 text-(length:--ds-feed-meta-size)"
-            data-pulse-subscription=""
-            type="button"
-            aria-disabled="true"
-            aria-describedby="pulse-subscription-unavailable"
-            title="Pulse email subscriptions are not available on this server"
-            aria-label="Subscription unavailable"
-          >
-            <Bell size={15} aria-hidden="true" />
-          </button>
+          <div className="flex items-center gap-2">
+            {projects.length > 0 && (
+              <button
+                className="flex items-center gap-1.25 pt-1 pr-2.5 pb-1 pl-2.5 border border-line bg-panel text-foreground hover:bg-subtle rounded-(--ds-feed-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 text-(length:--ds-feed-meta-size)"
+                data-pulse-write-update=""
+                type="button"
+                aria-expanded={composeOpen}
+                onClick={() => {
+                  setComposeOpen((v) => !v);
+                  setComposeError("");
+                }}
+              >
+                <Plus size={14} aria-hidden="true" />
+                Write update
+              </button>
+            )}
+            <button
+              className="flex items-center pt-1.25 pr-1.75 pb-1.25 pl-1.75 bg-transparent text-muted hover:bg-subtle cursor-not-allowed opacity-50 gap-(--ds-group-bar-gap) rounded-(--ds-tab-radius) focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11 text-(length:--ds-feed-meta-size)"
+              data-pulse-subscription=""
+              type="button"
+              aria-disabled="true"
+              aria-describedby="pulse-subscription-unavailable"
+              title="Pulse email subscriptions are not available on this server"
+              aria-label="Subscription unavailable"
+            >
+              <Bell size={15} aria-hidden="true" />
+            </button>
+          </div>
           <span id="pulse-subscription-unavailable" className="sr-only">
             Email subscriptions to Pulse are not available on this server, so
             there is nothing to turn on here.
@@ -4658,11 +4812,6 @@ function PulsePage({
               key={slug}
               role="tab"
               aria-selected={tab === label}
-              title={
-                label === "Recent"
-                  ? undefined
-                  : `${label} ranking is not available; showing recent project updates`
-              }
               onClick={() => setView(label, slug)}
               className="h-(--ds-feed-tab-height) rounded-(--ds-feed-tab-radius) p-(--ds-feed-tab-padding) shell-phone:h-11 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
             >
@@ -4690,16 +4839,94 @@ function PulsePage({
             className="mt-5.5 mr-0 mb-0 ml-0 pt-0 pr-0 pb-15 pl-0 shell-phone:mt-5.5 shell-phone:pt-0 shell-phone:pb-10"
             data-pulse-content=""
           >
-            {tab !== "Recent" && (
+            {composeOpen && (
+              <form
+                className="border grid gap-3 mt-0 mr-0 mb-6 ml-0 pt-4 pr-4 pb-4 pl-4 border-line rounded-lg bg-panel text-(length:--ds-feed-meta-size)"
+                data-pulse-composer=""
+                aria-label="Write project update"
+                onSubmit={(e) => void publishUpdate(e)}
+              >
+                <div className="flex flex-wrap items-center gap-3">
+                  <label className="flex items-center gap-2 font-medium">
+                    Project
+                    <select
+                      className="pt-1.5 pr-2.5 pb-1.5 pl-2.5 border border-line rounded-md bg-bg text-foreground font-normal font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11"
+                      value={composeProjectId}
+                      onChange={(e) => setComposeProjectId(e.target.value)}
+                    >
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-2 font-medium">
+                    Health
+                    <select
+                      className="pt-1.5 pr-2.5 pb-1.5 pl-2.5 border border-line rounded-md bg-bg text-foreground font-normal font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11"
+                      value={composeHealth}
+                      onChange={(e) =>
+                        setComposeHealth(
+                          e.target.value as "onTrack" | "atRisk" | "offTrack",
+                        )
+                      }
+                    >
+                      <option value="onTrack">On track</option>
+                      <option value="atRisk">At risk</option>
+                      <option value="offTrack">Off track</option>
+                    </select>
+                  </label>
+                </div>
+                <textarea
+                  className="w-full min-h-24 pt-2.25 pr-2.75 pb-2.25 pl-2.75 border border-line rounded-md bg-bg text-foreground resize-y font-sans placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+                  rows={3}
+                  value={composeBody}
+                  onChange={(e) => setComposeBody(e.target.value)}
+                  placeholder="Share progress, blockers, or next steps in Markdown…"
+                  aria-label="Update body"
+                />
+                {composeError && (
+                  <p
+                    className="mt-0 mr-0 mb-0 ml-0 text-[var(--health-risk)]"
+                    role="alert"
+                  >
+                    {composeError}
+                  </p>
+                )}
+                <div className="flex justify-end gap-2">
+                  <button
+                    className="pt-1.5 pr-3 pb-1.5 pl-3 border border-line rounded-(--ds-feed-tab-radius) bg-subtle text-foreground font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11"
+                    type="button"
+                    onClick={() => {
+                      setComposeOpen(false);
+                      setComposeError("");
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="pt-1.5 pr-3 pb-1.5 pl-3 rounded-(--ds-feed-tab-radius) bg-accent text-panel font-medium font-sans disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11"
+                    type="submit"
+                    disabled={
+                      composeBusy || !composeProjectId || !composeBody.trim()
+                    }
+                  >
+                    {composeBusy ? "Publishing…" : "Post update"}
+                  </button>
+                </div>
+              </form>
+            )}
+            {forMeFallback && (
               <p
                 className="border mt-0 mr-0 mb-5 ml-0 pt-2.25 pr-3 pb-2.25 pl-3 border-line rounded-md bg-panel text-muted text-[12px]"
                 role="status"
               >
-                {tab} ranking is not available in Hoja yet. Showing recent
-                project updates.
+                No updates yet on projects you follow, lead, or posted to.
+                Showing all project updates.
               </p>
             )}
-            {posts.map((post, index) => {
+            {visiblePosts.map((post, index) => {
               // A refetch moves a locally-appended reply into post.comments.nodes while it
               // is still in commentExtra; keyed by id, the later copy wins and nothing is
               // rendered twice.
@@ -4716,7 +4943,7 @@ function PulsePage({
                 <React.Fragment key={post.id}>
                   {(index === 0 ||
                     eraOf(post.createdAt) !==
-                      eraOf(posts[index - 1].createdAt)) && (
+                      eraOf(visiblePosts[index - 1].createdAt)) && (
                     <GroupBar
                       as="h2"
                       className="flex items-center h-auto mt-0 mr-0 mb-4.5 ml-0 pt-0 pr-0 pb-0 pl-0 rounded-none text-muted font-normal [&:after]:h-px [&:after]:flex-1 [&:after]:bg-line gap-(--ds-group-bar-gap) min-h-(--ds-group-bar-height) after:content-[''] text-(length:--ds-feed-page-title-size)"
@@ -11602,11 +11829,13 @@ function TeamProjectsPage({
 function TeamViewsPage({
   team,
   onIssue,
+  onOpenProject,
   onNavigate,
   revision,
 }: {
   team?: Team;
   onIssue: (issue: Issue) => void;
+  onOpenProject?: (project: Project) => void;
   onNavigate: (view: string, path?: string) => void;
   revision: number;
 }) {
@@ -11672,6 +11901,7 @@ function TeamViewsPage({
         path={location.pathname}
         onNavigate={onNavigate}
         onSelect={onIssue}
+        onOpenProject={onOpenProject}
         basePath={`/workspace/team/${team.key.toLowerCase()}/views`}
         viewName="Team views"
         title={`${team.name} views`}
@@ -12496,7 +12726,11 @@ function SettingsSidebar({
    * Hoja sub-issue describing the backend it needs. */
   const groups: [
     string,
-    [string, string, React.ComponentType<{ size?: number; className?: string }>][],
+    [
+      string,
+      string,
+      React.ComponentType<{ size?: number; className?: string }>,
+    ][],
   ][] = [
     [
       "Personal",
@@ -12582,7 +12816,11 @@ function SettingsSidebar({
             ),
         ] as [
           string,
-          [string, string, React.ComponentType<{ size?: number; className?: string }>][],
+          [
+            string,
+            string,
+            React.ComponentType<{ size?: number; className?: string }>,
+          ][],
         ],
     )
     .filter(([, items]) => items.length);
@@ -12667,7 +12905,11 @@ function SettingsSidebar({
           className="mb-4 flex min-h-(--ds-settings-search-height) flex-none items-center gap-2 rounded-lg border border-line bg-panel px-2.5 text-muted focus-within:border-foreground/30"
           data-settings-search=""
         >
-          <Search size={14} className="flex-none text-sidebar-icon" aria-hidden="true" />
+          <Search
+            size={14}
+            className="flex-none text-sidebar-icon"
+            aria-hidden="true"
+          />
           <input
             className="h-(--ds-settings-search-height) min-w-0 w-full border-0 bg-transparent p-0 text-(length:--ds-settings-nav-font-size) text-foreground outline-none placeholder:text-muted shell-phone:min-h-11 shell-phone:text-[16px]"
             aria-label="Search settings"
@@ -12692,11 +12934,7 @@ function SettingsSidebar({
           aria-label="Settings sections"
         >
           {filtered.map(([group, items]) => (
-            <div
-              className="mb-4 last:mb-0"
-              data-nav-group=""
-              key={group}
-            >
+            <div className="mb-4 last:mb-0" data-nav-group="" key={group}>
               <p className="mb-1 flex items-center px-2 text-xs font-(--ds-settings-nav-font-weight) leading-(--ds-settings-group-label-height) text-muted">
                 {group}
               </p>
@@ -18140,6 +18378,7 @@ function ProjectViewsPage({
   );
 }
 type BrowserView = ServerView;
+const VIEW_PRIORITY_LABELS = ["No priority", "Urgent", "High", "Medium", "Low"];
 function ViewsPage({
   orgId,
   issues,
@@ -18147,6 +18386,7 @@ function ViewsPage({
   path,
   onNavigate,
   onSelect,
+  onOpenProject,
   favoriteOnly = false,
   basePath = "/workspace/views",
   viewName = "Views",
@@ -18159,6 +18399,7 @@ function ViewsPage({
   path: string;
   onNavigate: (view: string, path?: string) => void;
   onSelect: (issue: Issue) => void;
+  onOpenProject?: (project: Project) => void;
   favoriteOnly?: boolean;
   basePath?: string;
   viewName?: string;
@@ -18172,10 +18413,15 @@ function ViewsPage({
     [name, setName] = useState(""),
     [query, setQuery] = useState(""),
     [state, setState] = useState(""),
+    [priority, setPriority] = useState(""),
+    [assignee, setAssignee] = useState(""),
+    [projectFilter, setProjectFilter] = useState(""),
     [active, setActive] = useState(""),
+    [editingId, setEditingId] = useState<string | null>(null),
     [editing, setEditing] = useState(path.endsWith("/new")),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const members = useMemberOptions();
   const teamScoped = basePath.startsWith("/workspace/team/");
   useEffect(() => {
     const syncKind = () =>
@@ -18183,6 +18429,16 @@ function ViewsPage({
     window.addEventListener("popstate", syncKind);
     return () => window.removeEventListener("popstate", syncKind);
   }, []);
+  const applyFields = (v: BrowserView) => {
+    const f = fieldsFromFilters(v.filters);
+    setActive(v.id);
+    setName(v.name);
+    setQuery(f.query);
+    setState(f.state);
+    setPriority(f.priority);
+    setAssignee(f.assignee);
+    setProjectFilter(f.project);
+  };
   const load = React.useCallback(async () => {
     if (!orgId) {
       setSaved([]);
@@ -18198,11 +18454,8 @@ function ViewsPage({
       const id = location.pathname.split("/").pop();
       const found = scoped.find((v) => v.id === id);
       if (found) {
-        const f = fieldsFromFilters(found.filters);
-        setActive(found.id);
-        setName(found.name);
-        setQuery(f.query);
-        setState(f.state);
+        applyFields(found);
+        setEditingId(null);
         setEditing(false);
       } else if (
         id &&
@@ -18241,40 +18494,117 @@ function ViewsPage({
       ].sort(),
     [items, kind],
   );
+  const assignees = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const m of members) byId.set(m.id, m.name);
+    for (const i of issues) {
+      if (i.assignee?.id && i.assignee.name) {
+        byId.set(i.assignee.id, i.assignee.name);
+      }
+    }
+    return [...byId.entries()]
+      .map(([id, label]) => ({ id, name: label }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [members, issues]);
   const deferredQuery = React.useDeferredValue(query);
   const matches = useMemo(() => {
     const q = deferredQuery.trim().toLowerCase();
     return items.filter((v) => {
-      const text =
-        kind === "issues"
-          ? `${(v as Issue).identifier} ${(v as Issue).title}`
-          : (v as Project).name;
-      const status =
-        kind === "issues" ? (v as Issue).state?.name : (v as Project).state;
-      return text.toLowerCase().includes(q) && (!state || status === state);
+      if (kind === "issues") {
+        const task = v as Issue;
+        const text = `${task.identifier} ${task.title}`.toLowerCase();
+        if (q && !text.includes(q)) return false;
+        if (state && task.state?.name !== state) return false;
+        if (priority !== "" && String(task.priority) !== priority) return false;
+        if (
+          assignee &&
+          task.assignee?.id !== assignee &&
+          task.assignee?.name !== assignee
+        )
+          return false;
+        if (
+          projectFilter &&
+          task.project?.id !== projectFilter &&
+          task.project?.name !== projectFilter
+        )
+          return false;
+        return true;
+      }
+      const proj = v as Project;
+      if (q && !proj.name.toLowerCase().includes(q)) return false;
+      if (state && proj.state !== state) return false;
+      return true;
     });
-  }, [items, kind, deferredQuery, state]);
+  }, [items, kind, deferredQuery, state, priority, assignee, projectFilter]);
   const [resultLimit, setResultLimit] = useState(LIST_RENDER_STEP);
   const destination = (k: string) => `${basePath}/${k}`;
+  const kindLabel = kind === "issues" ? "tasks" : "projects";
   const describe = (v: BrowserView) => {
     const f = fieldsFromFilters(v.filters);
+    const prioLabel =
+      f.priority !== ""
+        ? VIEW_PRIORITY_LABELS[Number(f.priority)] || `P${f.priority}`
+        : "";
+    const assigneeLabel = f.assignee
+      ? assignees.find((a) => a.id === f.assignee)?.name || f.assignee
+      : "";
+    const projectLabel = f.project
+      ? projects.find((p) => p.id === f.project)?.name || f.project
+      : "";
     return (
-      [f.query, f.state].filter(Boolean).join(" · ") ||
-      `All ${v.kind === "project" ? "projects" : "issues"}`
+      [f.query, f.state, prioLabel, assigneeLabel, projectLabel]
+        .filter(Boolean)
+        .join(" · ") || `All ${v.kind === "project" ? "projects" : "tasks"}`
     );
   };
   const start = () => {
-    setName(kind === "issues" ? "All issues" : "All projects");
+    setEditingId(null);
+    setName(kind === "issues" ? "All tasks" : "All projects");
     setQuery("");
     setState("");
+    setPriority("");
+    setAssignee("");
+    setProjectFilter("");
     setEditing(true);
+    setError("");
     onNavigate(viewName, `${destination(kind)}/new`);
+  };
+  const startEdit = (v: BrowserView) => {
+    applyFields(v);
+    setEditingId(v.id);
+    setEditing(true);
+    setError("");
+  };
+  const removeView = async (v: BrowserView) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await deleteView(v.id);
+      setSaved((rows) => rows.filter((x) => x.id !== v.id));
+      if (active === v.id) {
+        setActive("");
+        onNavigate(viewName, destination(kind));
+      }
+      if (editingId === v.id) {
+        setEditingId(null);
+        setEditing(false);
+      }
+      setError("");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
   };
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || busy) return;
     if (
-      relevant.some((v) => v.name.toLowerCase() === name.trim().toLowerCase())
+      relevant.some(
+        (v) =>
+          v.id !== editingId &&
+          v.name.toLowerCase() === name.trim().toLowerCase(),
+      )
     ) {
       setError("A view with that name already exists.");
       return;
@@ -18283,20 +18613,40 @@ function ViewsPage({
     try {
       const viewKind =
         kind === "issues" ? ("issue" as const) : ("project" as const);
-      const created = await createView({
-        name: name.trim(),
-        kind: viewKind,
-        scope: teamScoped ? "team" : "workspace",
-        ...(teamScoped ? { teamId: orgId } : {}),
-        visibility: teamScoped ? "team" : "workspace",
-        filters: filtersFromFields(viewKind, query, state),
-        display: {},
+      const filters = filtersFromFields(viewKind, query, state, {
+        priority,
+        assignee,
+        project: projectFilter,
       });
-      setSaved((rows) => [...rows, created]);
-      setActive(created.id);
-      setEditing(false);
-      setError("");
-      history.replaceState({}, "", `${destination(kind)}/${created.id}`);
+      if (editingId) {
+        const updated = await updateView(editingId, {
+          name: name.trim(),
+          filters,
+        });
+        setSaved((rows) =>
+          rows.map((x) => (x.id === updated.id ? updated : x)),
+        );
+        setActive(updated.id);
+        setEditingId(null);
+        setEditing(false);
+        setError("");
+        history.replaceState({}, "", `${destination(kind)}/${updated.id}`);
+      } else {
+        const created = await createView({
+          name: name.trim(),
+          kind: viewKind,
+          scope: teamScoped ? "team" : "workspace",
+          ...(teamScoped ? { teamId: orgId } : {}),
+          visibility: teamScoped ? "team" : "workspace",
+          filters,
+          display: {},
+        });
+        setSaved((rows) => [...rows, created]);
+        setActive(created.id);
+        setEditing(false);
+        setError("");
+        history.replaceState({}, "", `${destination(kind)}/${created.id}`);
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -18304,11 +18654,8 @@ function ViewsPage({
     }
   };
   const select = (v: BrowserView) => {
-    const f = fieldsFromFilters(v.filters);
-    setActive(v.id);
-    setName(v.name);
-    setQuery(f.query);
-    setState(f.state);
+    applyFields(v);
+    setEditingId(null);
     setEditing(false);
     onNavigate(
       viewName,
@@ -18323,6 +18670,13 @@ function ViewsPage({
       );
     } catch (err) {
       setError((err as Error).message);
+    }
+  };
+  const openProjectItem = (p: Project) => {
+    if (onOpenProject) {
+      onOpenProject(p);
+    } else {
+      onNavigate("Project detail", `/workspace/project/${p.id}`);
     }
   };
   return (
@@ -18386,7 +18740,8 @@ function ViewsPage({
           onSubmit={save}
         >
           <h2 className="text-[16px] mt-0 mr-0 mb-0 ml-0">
-            Create {kind === "issues" ? "issue" : "project"} view
+            {editingId ? "Edit" : "Create"}{" "}
+            {kind === "issues" ? "task" : "project"} view
           </h2>
           <label className="grid gap-1.5">
             View name
@@ -18421,11 +18776,61 @@ function ViewsPage({
               ))}
             </select>
           </label>
+          {kind === "issues" && (
+            <>
+              <label className="grid gap-1.5">
+                Priority
+                <select
+                  className="w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 border border-line rounded-md bg-panel text-foreground max-md:text-base font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                  value={priority}
+                  onChange={(e) => setPriority(e.target.value)}
+                >
+                  <option value="">All priorities</option>
+                  {VIEW_PRIORITY_LABELS.map((label, idx) => (
+                    <option key={label} value={String(idx)}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-1.5">
+                Assignee
+                <select
+                  className="w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 border border-line rounded-md bg-panel text-foreground max-md:text-base font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                  value={assignee}
+                  onChange={(e) => setAssignee(e.target.value)}
+                >
+                  <option value="">All assignees</option>
+                  {assignees.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-1.5">
+                Project
+                <select
+                  className="w-full pt-2.25 pr-2.25 pb-2.25 pl-2.25 border border-line rounded-md bg-panel text-foreground max-md:text-base font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:text-[16px]"
+                  value={projectFilter}
+                  onChange={(e) => setProjectFilter(e.target.value)}
+                >
+                  <option value="">All projects</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          )}
           <div className="flex justify-end gap-2">
             <button
               className="pt-1.75 pr-3 pb-1.75 pl-3 rounded-[20px] bg-accent text-panel text-[12px] first:bg-subtle first:text-foreground font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
               type="button"
               onClick={() => {
+                setEditingId(null);
                 setEditing(false);
                 onNavigate(viewName, destination(kind));
               }}
@@ -18437,11 +18842,17 @@ function ViewsPage({
               type="submit"
               disabled={!name.trim() || busy}
             >
-              {busy ? "Creating…" : "Create view"}
+              {busy
+                ? editingId
+                  ? "Saving…"
+                  : "Creating…"
+                : editingId
+                  ? "Save view"
+                  : "Create view"}
             </button>
           </div>
           <p className="text-[12px] text-muted">
-            {matches.length} matching loaded {kind}; saved to{" "}
+            {matches.length} matching loaded {kindLabel}; saved to{" "}
             {teamScoped ? "this team" : "your workspace"}.
           </p>
         </form>
@@ -18476,14 +18887,33 @@ function ViewsPage({
                   <small className="text-muted">{describe(v)}</small>
                 </span>
               </button>
-              <button
-                className="flex gap-2.25 items-center pt-2.75 pr-2.75 pb-2.75 pl-2.75 bg-transparent text-left font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                type="button"
-                aria-label={`${v.favorite ? "Remove favorite" : "Favorite"} ${v.name}`}
-                onClick={() => favorite(v)}
-              >
-                {v.favorite ? "★" : "☆"}
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  className="pt-1.5 pr-2 pb-1.5 pl-2 bg-transparent text-muted hover:text-foreground text-[12px] font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11"
+                  type="button"
+                  aria-label={`Edit ${v.name}`}
+                  onClick={() => startEdit(v)}
+                >
+                  Edit
+                </button>
+                <button
+                  className="pt-1.5 pr-2 pb-1.5 pl-2 bg-transparent text-muted hover:text-danger text-[12px] font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11"
+                  type="button"
+                  aria-label={`Delete ${v.name}`}
+                  disabled={busy}
+                  onClick={() => void removeView(v)}
+                >
+                  Delete
+                </button>
+                <button
+                  className="flex gap-2.25 items-center pt-2.75 pr-2.75 pb-2.75 pl-2.75 bg-transparent text-left font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                  type="button"
+                  aria-label={`${v.favorite ? "Remove favorite" : "Favorite"} ${v.name}`}
+                  onClick={() => favorite(v)}
+                >
+                  {v.favorite ? "★" : "☆"}
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -18501,7 +18931,7 @@ function ViewsPage({
             <p className="leading-normal text-[13px] mt-0 mr-0 mb-2 ml-0">
               {favoriteOnly
                 ? "Favorite a saved view to keep it here."
-                : `Create views using filters to see only the ${kind === "issues" ? "tasks" : kind} you want. Views are saved to ${teamScoped ? "this team" : "your workspace"} and can be shared.`}
+                : `Create views using filters to see only the ${kindLabel} you want. Views are saved to ${teamScoped ? "this team" : "your workspace"} and can be shared.`}
             </p>
             {!favoriteOnly && (
               <button
@@ -18521,22 +18951,55 @@ function ViewsPage({
           data-workspace-views-results=""
         >
           <h2 className="text-[13px]">
-            {matches.length} matching loaded {kind}
+            {matches.length} matching loaded {kindLabel}
           </h2>
           {kind === "issues"
-            ? matches.slice(0, resultLimit).map((x) => (
-                <button
-                  className="flex gap-2.25 items-center pt-2.75 pr-2.75 pb-2.75 pl-2.75 bg-transparent text-left border-b border-line font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
-                  type="button"
-                  key={x.id}
-                  onClick={() => onSelect(x as Issue)}
-                >
-                  {(x as Issue).identifier} · {(x as Issue).title}
-                </button>
-              ))
-            : matches
-                .slice(0, resultLimit)
-                .map((x) => <p key={x.id}>{(x as Project).name}</p>)}
+            ? matches.slice(0, resultLimit).map((x) => {
+                const task = x as Issue;
+                const prioText =
+                  task.priorityLabel ||
+                  VIEW_PRIORITY_LABELS[task.priority] ||
+                  "No priority";
+                return (
+                  <button
+                    className="flex justify-between gap-2.25 items-center pt-2.75 pr-2.75 pb-2.75 pl-2.75 bg-transparent text-left border-b border-line font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                    type="button"
+                    key={task.id}
+                    onClick={() => onSelect(task)}
+                  >
+                    <span className="flex items-center gap-2 min-w-0">
+                      {task.state && <StatusIcon state={task.state} />}
+                      <span className="text-muted flex-none">
+                        {task.identifier}
+                      </span>
+                      <span className="truncate">{task.title}</span>
+                    </span>
+                    <span className="flex items-center gap-2 flex-none text-muted text-[11px]">
+                      {task.state?.name && <span>{task.state.name}</span>}
+                      <span>{prioText}</span>
+                      {task.assignee?.name && <span>{task.assignee.name}</span>}
+                    </span>
+                  </button>
+                );
+              })
+            : matches.slice(0, resultLimit).map((x) => {
+                const proj = x as Project;
+                return (
+                  <button
+                    className="flex justify-between gap-2.25 items-center pt-2.75 pr-2.75 pb-2.75 pl-2.75 bg-transparent text-left border-b border-line font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
+                    type="button"
+                    key={proj.id}
+                    onClick={() => openProjectItem(proj)}
+                  >
+                    <span className="font-medium">{proj.name}</span>
+                    {proj.state && (
+                      <span className="text-muted text-[11px]">
+                        {proj.state}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
           {matches.length > resultLimit && (
             <button
               className="flex gap-2.25 items-center pt-2.75 pr-2.75 pb-2.75 pl-2.75 bg-transparent text-left border-b border-line font-sans focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 shell-phone:min-h-11 pointer-coarse:min-h-11 shell-phone:min-w-11 pointer-coarse:min-w-11"
