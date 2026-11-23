@@ -156,3 +156,7 @@ disallow_untyped_defs = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# A full run writes ~1,500 SQLite files (~3 GB) under /tmp, which is RAM-backed on the
+# dev box; pytest's default keeps three runs. Keep only failing tests' directories.
+tmp_path_retention_policy = "failed"
+tmp_path_retention_count = 1

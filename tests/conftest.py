@@ -20,6 +20,7 @@ that would have failed: on any condition this file does not recognise, the real
 
 from __future__ import annotations
 
+import atexit
 import os
 import shutil
 import sqlite3
@@ -116,6 +117,9 @@ def _sqlite_template() -> str:
     from hoja_server.db import make_engine
 
     directory = tempfile.mkdtemp(prefix="hoja-migrate-template-")
+    # One template per worker process; remove it when the process exits, or every
+    # run leaves its migrated databases behind in /tmp.
+    atexit.register(shutil.rmtree, directory, ignore_errors=True)
     path = os.path.join(directory, "template.db")
     engine = make_engine(path)
     try:
