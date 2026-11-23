@@ -34,6 +34,12 @@ import { storedApiToken } from "../main";
 
 type Tab = "timeline" | "tools" | "tasks";
 
+/* The agents whose plugins upload traces (hoja-claude-plugin, hoja-codex-plugin). */
+const HOST_NAMES: Record<string, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+};
+
 const BAR: Record<TraceSpan["kind"], string> = {
   session: "bg-muted",
   turn: "bg-foreground/15",
@@ -658,9 +664,7 @@ export function TraceViewer({
   const meta = s
     ? [
         [
-          trace.source.host === "claude-code"
-            ? "Claude Code"
-            : trace.source.host,
+          HOST_NAMES[trace.source.host] || trace.source.host,
           trace.source.hostVersion,
         ]
           .filter(Boolean)
