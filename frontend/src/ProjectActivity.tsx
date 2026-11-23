@@ -5,6 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { actorLabel, eventPhrase } from "./graph/activityEvents";
 import { HEALTH, healthColors, healthDot } from "./graph/health";
 import { gql, relTime, StatusIcon } from "./main";
 import type { Issue, IssueState, Project, PulsePost, Team } from "./main";
@@ -346,6 +347,25 @@ export function ProjectActivity({
           },
         ];
     }
+    // System, runner, decision and review events are not field edits: say what they
+    // were instead of falling through to "updated" (HOJA-728).
+    const phrase = eventPhrase(e);
+    if (phrase)
+      return [
+        {
+          key: `event:${e.eventType}`,
+          node: (
+            <>
+              {phrase} · {ref}
+            </>
+          ),
+          plural: (n) => (
+            <>
+              {phrase} · {many(n)}
+            </>
+          ),
+        },
+      ];
     const out: Line[] = [];
     if (c.stateId)
       out.push({
@@ -479,7 +499,7 @@ export function ProjectActivity({
             kind: "lines",
             at: x.at,
             actor,
-            name: x.event.actor?.name || users.get(actor) || "Someone",
+            name: x.event.actor?.name || users.get(actor) || actorLabel(x.event),
             key: line.key,
             items: [item],
           });

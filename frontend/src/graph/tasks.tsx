@@ -13,6 +13,7 @@ import {
   PropertiesPanel,
 } from "./detail";
 import { StateGlyph } from "./stateGlyph";
+import { actorLabel, eventPhrase } from "./activityEvents";
 import { TaskUsageSection } from "../profiles/TaskUsageSection";
 import React, {
   memo,
@@ -4502,6 +4503,7 @@ function mergeIssueView(
   return out;
 }
 
+/** What happened, without the actor (the caller names who did it). */
 function describeEvent(
   e: {
     eventType: string;
@@ -4510,21 +4512,22 @@ function describeEvent(
   },
   states: IssueState[],
 ): string {
-  const actor = e.actor?.name || "Someone";
+  if (e.eventType === "issueCreated" || e.eventType === "created")
+    return "created the task";
+  const fixed = eventPhrase(e);
+  if (fixed) return fixed;
   const ch = (e.changes || {}) as Record<
     string,
     { from?: string | null; to?: string | null }
   >;
-  if (e.eventType === "issueCreated" || e.eventType === "created")
-    return `${actor} created the task`;
   const sname = (id?: string | null) =>
     (id && states.find((s) => s.id === id)?.name) || "Unknown";
   if (ch.stateId)
-    return `${actor} moved from ${sname(ch.stateId.from)} to ${sname(ch.stateId.to)}`;
-  if (ch.assigneeId) return `${actor} assigned the task`;
-  if (ch.cycleId) return `${actor} changed the cycle`;
-  if (ch.priority) return `${actor} changed the priority`;
-  return `${actor} updated the task`;
+    return `moved from ${sname(ch.stateId.from)} to ${sname(ch.stateId.to)}`;
+  if (ch.assigneeId) return "assigned the task";
+  if (ch.cycleId) return "changed the cycle";
+  if (ch.priority) return "changed the priority";
+  return "updated the task";
 }
 
 type PendingComment = {
@@ -6186,16 +6189,12 @@ export function GraphIssueDetail({
                   )}
                 >
                   <Avatar
-                    name={e.actor?.name}
+                    name={actorLabel(e)}
                     seed={e.actor?.avatarSeed}
                     size={18}
                   />
                   <span>
-                    <b>{e.actor?.name || "Someone"}</b>{" "}
-                    {describeEvent(e, states).replace(
-                      /^.*? (created|moved|assigned|changed|updated)/,
-                      "$1",
-                    )}
+                    <b>{actorLabel(e)}</b> {describeEvent(e, states)}
                   </span>
                   <time>{relTime(e.createdAt)}</time>
                 </div>

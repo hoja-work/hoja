@@ -50,7 +50,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from hoja_server import agent_policy, audit, tenant_context, usage_ledger
+from hoja_server import activity, agent_policy, audit, tenant_context, usage_ledger
 from hoja_server.db import (
     agent_lease,
     agent_member,
@@ -59,7 +59,6 @@ from hoja_server.db import (
     comment,
     gen_token,
     issue,
-    issue_activity,
     new_id,
     now_iso,
     organization,
@@ -1274,7 +1273,7 @@ def post_events(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any],
                     # the issue's activity log.
                     _apply_session_event(conn, org_id, lease, kind, json.loads(encoded))
                 else:
-                    conn.execute(issue_activity_insert(org_id, lease["task_id"], kind, encoded))
+                    issue_activity_record(conn, org_id, lease, kind, encoded)
                     if kind in START_EVENT_KINDS:
                         _apply_session_event(conn, org_id, lease, EVENT_STARTED, {})
                 accepted = max(accepted, seq)
@@ -1420,18 +1419,17 @@ def post_logs(engine, runner_row: Mapping[str, Any], body: Mapping[str, Any]) ->
     return {"accepted": kept}
 
 
-def issue_activity_insert(org_id: str, task_id: str, kind: str, payload: str):
-    from hoja_server.db import issue_activity
+def issue_activity_record(conn, org_id: str, lease: Mapping[str, Any], kind: str,
+                          payload: str) -> None:
+    """Put one runner event on the task's timeline, attributed to the agent doing the run.
 
-    return issue_activity.insert().values(
-        id=new_id(),
-        organization_id=org_id,
-        issue_id=task_id,
-        actor_id=None,
-        event_type=f"runner.{kind}"[:80],
-        changes=payload,
-        created_at=now_iso(),
-    )
+    HOJA-728: these rows used to carry no actor, so the timeline showed "Someone updated
+    the task" for every lease a runner claimed. The run belongs to the delegated agent;
+    only a run on a task nobody delegated stays actor-less (rendered as Hoja, the system).
+    """
+    agent_user_id, _session_id = _usage_agent(conn, org_id, lease)
+    activity.record(conn, org_id=org_id, issue_id=lease["task_id"], actor_id=agent_user_id,
+                    event_type=f"runner.{kind}"[:80], changes=payload, created_at=now_iso())
 
 
 # ---------------------------------------------------------------------------
@@ -1605,12 +1603,9 @@ def post_finish_comment(conn, org_id: str, lease: Mapping[str, Any], *,
         updated_at=stamp,
     ))
     # The task's own timeline says a comment arrived, exactly as a human's would.
-    conn.execute(issue_activity.insert().values(
-        id=new_id(), organization_id=org_id, issue_id=issue_row["id"],
-        actor_id=agent_id, event_type="commentCreated",
-        changes=json.dumps({"commentId": comment_id}, separators=(",", ":")),
-        created_at=stamp,
-    ))
+    activity.record(conn, org_id=org_id, issue_id=issue_row["id"], actor_id=agent_id,
+                    event_type="commentCreated", changes={"commentId": comment_id},
+                    created_at=stamp)
     return comment_id
 
 

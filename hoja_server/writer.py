@@ -10,7 +10,7 @@ from graphql import GraphQLError
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.engine import Engine
 
-from hoja_server import comment_policy, identifiers, notifications, uploads
+from hoja_server import activity, comment_policy, identifiers, notifications, uploads
 from hoja_server import decisions as decisiondocs
 from hoja_server import views as viewdocs
 from hoja_server.db import (
@@ -888,12 +888,9 @@ class Writer:
 
     @staticmethod
     def _record_activity(conn, org_id, issue_id, actor_id, event_type, changes, ts):
-        conn.execute(issue_activity.insert().values(
-            id=new_id(), organization_id=org_id, issue_id=issue_id,
-            actor_id=actor_id, event_type=event_type,
-            changes=json.dumps(changes, separators=(",", ":")) if changes else None,
-            created_at=ts,
-        ))
+        # HOJA-728: the shared writer refuses a user-driven row with no actor.
+        activity.record(conn, org_id=org_id, issue_id=issue_id, actor_id=actor_id,
+                        event_type=event_type, changes=changes or None, created_at=ts)
 
     @staticmethod
     def _notify_issue_recipients(conn, org_id, issue_id, actor_id, recipients, kind, ts,
@@ -1373,13 +1370,15 @@ class Writer:
 
     def issue_archive(self, org_id: str, viewer_id: str, ident: str) -> bool:
         self._authorize_issue_change(org_id, viewer_id, ident, capability="task.delete")
-        return self._soft_delete(issue, org_id, ident, by_identifier=True, event_type="issueArchived")
+        return self._soft_delete(issue, org_id, ident, by_identifier=True, event_type="issueArchived",
+                                 actor_id=viewer_id)
 
     def issue_delete(self, org_id: str, viewer_id: str, ident: str) -> bool:
         self._authorize_issue_change(org_id, viewer_id, ident, capability="task.delete")
         return self._soft_delete(issue, org_id, ident, by_identifier=True)
 
-    def _soft_delete(self, table, org_id, ident, by_identifier=False, event_type=None) -> bool:
+    def _soft_delete(self, table, org_id, ident, by_identifier=False, event_type=None,
+                     actor_id=None) -> bool:
         with self.engine.begin() as conn:
             cond = (table.c.id == ident)
             if by_identifier and "identifier" in table.c:
@@ -1391,7 +1390,7 @@ class Writer:
             ts = now_iso()
             conn.execute(table.update().where(table.c.id == row[0]).values(archived_at=ts))
             if event_type:
-                self._record_activity(conn, org_id, row[0], None, event_type, None, ts)
+                self._record_activity(conn, org_id, row[0], actor_id, event_type, None, ts)
             return True
 
     # -------------------------------------------------------------- comments

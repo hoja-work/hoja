@@ -17,7 +17,7 @@ from graphql import GraphQLError
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.engine import Engine
 
-from hoja_server import addresses, identifiers
+from hoja_server import activity, addresses, identifiers
 from hoja_server import decisions as decisiondocs
 from hoja_server import views as viewdocs
 
@@ -2619,7 +2619,7 @@ class Store:
         `changes`, and the merge updates the link in the same transaction so the feed and the
         list cannot disagree.
         """
-        from hoja_server.db import new_id, now_iso
+        from hoja_server.db import now_iso
 
         stamp = now_iso()
         with self.engine.begin() as conn:
@@ -2634,10 +2634,9 @@ class Store:
                 # read would compare against a sha the pull request never had.
                 conn.execute(update(github_link).where(github_link.c.id == row["id"]).values(
                     state="merged", merged_at=stamp, updated_at=stamp))
-            conn.execute(issue_activity.insert().values(
-                id=new_id(), organization_id=org_id, issue_id=row["issue_id"],
-                actor_id=actor_id, event_type=event_type,
-                changes=json.dumps(changes, sort_keys=True), created_at=stamp))
+            activity.record(conn, org_id=org_id, issue_id=row["issue_id"], actor_id=actor_id,
+                            event_type=event_type, changes=json.dumps(changes, sort_keys=True),
+                            created_at=stamp)
             refreshed = _conn_rows(conn, select(github_link).where(
                 github_link.c.id == row["id"]))
             return self.ser_github_link(refreshed[0]) if refreshed else None

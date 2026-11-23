@@ -44,10 +44,10 @@ from ariadne import MutationType, ObjectType, QueryType, gql
 from graphql import GraphQLError
 from sqlalchemy import and_, select
 
+from hoja_server import activity
 from hoja_server.db import (
     cycle,
     issue,
-    issue_activity,
     new_id,
     now_iso,
     sla_clock,
@@ -376,10 +376,8 @@ def _issue_row(conn, org_id, issue_id):
 
 
 def _activity(conn, org_id, issue_id, event_type, payload, at, actor_id=None):
-    conn.execute(issue_activity.insert().values(
-        id=new_id(), organization_id=org_id, issue_id=issue_id,
-        actor_id=actor_id, event_type=event_type,
-        changes=json.dumps(payload), created_at=at))
+    activity.record(conn, org_id=org_id, issue_id=issue_id, actor_id=actor_id,
+                    event_type=event_type, changes=json.dumps(payload), created_at=at)
 
 
 def start_clock(conn, org_id, issue_id, policy, started_at):
@@ -860,10 +858,7 @@ def clock_payload(store, org_id, issue_id, *, record_breach=True):
         ts = now_iso()
         with store.engine.begin() as conn:
             _record_breach(conn, org_id, issue_id, ts)
-            conn.execute(issue_activity.insert().values(
-                id=new_id(), organization_id=org_id, issue_id=issue_id,
-                actor_id=None, event_type="slaBreached",
-                changes=json.dumps({"policyId": policy["id"]}), created_at=ts))
+            _activity(conn, org_id, issue_id, "slaBreached", {"policyId": policy["id"]}, ts)
         # The read that observes the breach reports it stamped, not blank: the
         # caller must not have to read twice to learn what just happened.
         clock["breached_at"] = ts

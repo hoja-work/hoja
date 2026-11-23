@@ -36,7 +36,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
-from hoja_server import secrets_box, tenant_context, webhooks
+from hoja_server import activity, secrets_box, tenant_context, webhooks
 from hoja_server.db import (
     api_key,
     extension,
@@ -47,7 +47,6 @@ from hoja_server.db import (
     extension_hook,
     gen_token,
     issue,
-    issue_activity,
     new_id,
     now_iso,
     team,
@@ -659,10 +658,10 @@ def record_patches(engine: Engine, org_id: str, issue_id: str, patches) -> None:
         return
     with engine.begin() as conn:
         for bot_id, hook_key, fields in patches:
-            conn.execute(issue_activity.insert().values(
-                id=new_id(), organization_id=org_id, issue_id=issue_id, actor_id=bot_id,
-                event_type="extensionPatched", changes=json.dumps({"hook": hook_key, "fields": fields}),
-                created_at=now_iso()))
+            activity.record(conn, org_id=org_id, issue_id=issue_id, actor_id=bot_id,
+                            event_type="extensionPatched",
+                            changes=json.dumps({"hook": hook_key, "fields": fields}),
+                            created_at=now_iso())
 
 
 def run_action(engine: Engine, store, org_id: str, actor_id: str, action_id: str, entity_id: str) -> dict:
