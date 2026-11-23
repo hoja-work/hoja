@@ -6888,7 +6888,7 @@ function KanbanCard({
     >
       {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- drag surface only; the keyboard path (alt+arrow) lives on the inner button */}
       <div
-        className="relative z-10 border flex flex-col gap-2.25 text-left cursor-grab touch-none rounded-2xl shadow-sm border-line bg-panel p-4 hover:border-line active:cursor-grabbing focus-visible:relative focus-visible:z-1 data-dragging:opacity-45 [&[data-depth]:not([data-depth=0])]:relative [&[data-depth]:not([data-depth=0])::before]:absolute [&[data-depth]:not([data-depth=0])::before]:-left-2 [&[data-depth]:not([data-depth=0])::before]:top-1.5 [&[data-depth]:not([data-depth=0])::before]:bottom-1.5 [&[data-depth]:not([data-depth=0])::before]:w-0.5 [&[data-depth]:not([data-depth=0])::before]:rounded-sm [&[data-depth]:not([data-depth=0])::before]:bg-line focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 pointer-coarse:touch-pan-y pointer-coarse:cursor-auto [&[data-depth]:not([data-depth=0])]:before:content-['']"
+        className="relative z-10 border flex flex-col gap-2.25 text-left cursor-grab touch-manipulation rounded-2xl shadow-sm border-line bg-panel p-4 hover:border-line active:cursor-grabbing focus-visible:relative focus-visible:z-1 data-dragging:opacity-45 [&[data-depth]:not([data-depth=0])]:relative [&[data-depth]:not([data-depth=0])::before]:absolute [&[data-depth]:not([data-depth=0])::before]:-left-2 [&[data-depth]:not([data-depth=0])::before]:top-1.5 [&[data-depth]:not([data-depth=0])::before]:bottom-1.5 [&[data-depth]:not([data-depth=0])::before]:w-0.5 [&[data-depth]:not([data-depth=0])::before]:rounded-sm [&[data-depth]:not([data-depth=0])::before]:bg-line focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 pointer-coarse:cursor-auto [&[data-depth]:not([data-depth=0])]:before:content-['']"
         data-stack-layer=""
         data-kanban-card=""
         data-issue-id={issue.id}
@@ -7618,7 +7618,7 @@ function Kanban({
             </header>
             <KanbanScrollFade>
               <div
-                className="flex flex-col gap-1 p-1 overflow-y-auto flex-auto min-h-0 overscroll-contain [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-subtle [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:bg-muted max-h-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 scrollbar-thin [&::-webkit-scrollbar-thumb]:border-[2px_solid_var(--subtle)]"
+                className="flex flex-col gap-1 p-1 overflow-y-auto flex-auto min-h-0 overscroll-y-contain [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-subtle [&::-webkit-scrollbar-thumb]:rounded-lg [&::-webkit-scrollbar-thumb]:bg-muted max-h-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2 scrollbar-thin [&::-webkit-scrollbar-thumb]:border-[2px_solid_var(--subtle)]"
                 data-kanban-cards=""
                 onScroll={
                   group.items.length > (limits[group.state.id] || KANBAN_PAGE)
