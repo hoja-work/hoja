@@ -129,7 +129,7 @@ export function ProjectActivity({project, teams, users, updates, onPublish, onOp
   const person = (id: unknown) => typeof id === 'string' ? <b>{users.get(id) || 'a former member'}</b> : <b>nobody</b>;
   type Line = {key: string; node: React.ReactNode; plural: (n: number) => React.ReactNode};
   const lines = (e: ActivityEvent): Line[] => {
-    const c = e.changes || {}, ref = issueRef(e.issue), many = (n: number) => <b>{n} issues</b>;
+    const c = e.changes || {}, ref = issueRef(e.issue), many = (n: number) => <b>{n} tasks</b>;
     switch (e.eventType) {
       case 'issueCreated': return [{key: 'created', node: <>created {ref}</>, plural: n => <>created {many(n)}</>}];
       case 'commentCreated': return [{key: 'comment', node: <>commented on {ref}</>, plural: n => <>commented on {many(n)}</>}];
@@ -208,7 +208,7 @@ export function ProjectActivity({project, teams, users, updates, onPublish, onOp
     {errors.map((s, i) => <p key={i} role="alert" className="error">{s.paged.error} <button type="button" onClick={s.paged.retry}>Retry</button></p>)}
     {!ready && <p role="status" className="muted">Loading activity…</p>}
     {ready && !entries.length && !errors.length && <div className="activity-empty"><h3>{filter === 'All' ? 'No activity yet' : `No ${filter.toLowerCase()} yet`}</h3>
-      <p>{filter === 'All' || filter === 'Updates' ? 'Post an update above to tell the team how the project is going.' : 'Changes to this project’s issues will appear here.'}</p>
+      <p>{filter === 'All' || filter === 'Updates' ? 'Post an update above to tell the team how the project is going.' : 'Changes to this project’s tasks will appear here.'}</p>
       {filter !== 'All' && <button type="button" onClick={() => setFilter('All')}>Show all activity</button>}</div>}
 
     <ol className="activity-feed" aria-label="Project activity">

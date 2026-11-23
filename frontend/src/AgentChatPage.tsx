@@ -181,7 +181,7 @@ function ComposerSwitch() {
   const questions = pending ? splitAsk(pending).questions : null;
   if (questions) return <AskWizard key={pending} questions={questions} />;
   // Nested default composer keeps the library's input and starters; CSS removes the doubled slot padding.
-  return <AgentInterface.Composer placeholder="Ask about issues, projects, or cycles…" />;
+  return <AgentInterface.Composer placeholder="Ask about tasks, projects, or cycles…" />;
 }
 
 // History opens as a panel inside the chat column instead of a second sidebar next to the app navigation.
@@ -274,7 +274,7 @@ function ScrollFollower() {
 }
 
 const STARTERS = [
-  { displayText: 'Summarize my open issues', prompt: 'Summarize my open tasks.' },
+  { displayText: 'Summarize my open tasks', prompt: 'Summarize my open tasks.' },
   { displayText: 'What is in progress this cycle?', prompt: 'What is in progress in the active cycle?' },
   { displayText: 'What is due this week?', prompt: 'What tasks are due this week?' },
   { displayText: 'Find unassigned bugs', prompt: 'Find unassigned bugs and list them.' },
@@ -296,7 +296,7 @@ export function AgentChatPage({ workspaceName }: { workspaceName: string }) {
         <AgentInterface.Sidebar>{null}</AgentInterface.Sidebar>
         <AgentInterface.ThreadHeader><ChatToolbar /></AgentInterface.ThreadHeader>
         <AgentInterface.MobileHeader><ChatToolbar /></AgentInterface.MobileHeader>
-        <AgentInterface.Welcome title={`Ask the ${name} agent`} description="Search, summarize, and update issues in your workspace." />
+        <AgentInterface.Welcome title={`Ask the ${name} agent`} description="Search, summarize, and update tasks in your workspace." />
         <AgentInterface.Composer>
           <ComposerSwitch />
           <ScrollFollower />

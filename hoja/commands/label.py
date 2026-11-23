@@ -10,7 +10,7 @@ import typer
 from hoja.cli_state import build_client, get_state
 from hoja.errors import NotFoundError, UsageError
 from hoja.graphql import mutations, queries
-from hoja.models.issue import IssueLabel
+from hoja.models.task import IssueLabel
 from hoja.models.team import Team
 from hoja.output import render
 

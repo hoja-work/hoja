@@ -11,7 +11,7 @@ import typer
 from hoja.cli_state import build_client, get_state
 from hoja.errors import UsageError
 from hoja.graphql import mutations, queries
-from hoja.models.issue import Comment, Issue
+from hoja.models.task import Comment, Issue
 from hoja.output import render
 
 comment_app = typer.Typer(help="Comments")

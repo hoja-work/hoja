@@ -6,12 +6,12 @@ without trusting the UI.
 
 ## Definition of record
 
-Every issue currently attached to a cycle is in the cycle's **scope**. An issue
+Every task currently attached to a cycle is in the cycle's **scope**. A task
 leaves scope in exactly two ways, and each has its own number:
 
 | Term | Meaning | Code |
 | --- | --- | --- |
-| scope | issues attached to the cycle now | `cycleStats().scope` |
+| scope | tasks attached to the cycle now | `cycleStats().scope` |
 | delivered | `state.type === 'completed'` | `cycleStats().completed` |
 | canceled | `state.type === 'canceled'` | `cycleStats().canceled` |
 | open | scope − delivered − canceled | `cycleStats().open` |
@@ -30,7 +30,7 @@ was canceled has no delivery rate, and must never render as 100%.
 
 ## Why canceled is not simply removed from the denominator
 
-The tempting fix for "canceled issues are counting against me" is
+The tempting fix for "canceled tasks are counting against me" is
 `completed / (scope - canceled)`. That makes the number gameable at the exact
 moment it is read: cancel the leftovers and the cycle becomes 100%.
 
@@ -46,9 +46,9 @@ old UI number              79% success (completed / scope)
 delivery of kept work      100% (completed / 162 kept)
 ```
 
-Both statements are true, and the pair is the honest answer: *every issue that
+Both statements are true, and the pair is the honest answer: *every task that
 survived was delivered; one in five was dropped.* Reporting only the first
-number rewards the dropping. Canceled issues remain visible instead of being
+number rewards the dropping. Canceled tasks remain visible instead of being
 treated as noise or removed from the historical scope.
 
 Different cancellation *reasons* (duplicate, superseded, no longer needed,
@@ -63,7 +63,7 @@ reader judge.
   and `N% of what it kept` when anything was canceled.
 - Cycle progress legend: Scope / Delivered / Open / Canceled, all with the same
   denominator (scope), so the percentages add up.
-- Burndown: an issue leaves the remaining line when it is delivered **or**
+- Burndown: a task leaves the remaining line when it is delivered **or**
   canceled, at the time it happened. A fully closed cycle reaches zero.
 - Breakdown rows (assignee, label, priority, project): `done` over kept work,
   with the bucket's canceled count appended.
@@ -86,7 +86,7 @@ The contract test pins the numbers by hand, including the adversarial case
   `hoja_server/agent_prompt.py:86` tells agents to report it — so any agent
   asked for cycle progress reports 0%. The web UI ignores the field and computes
   locally; the API value is still wrong.
-- Scope is the set of issues attached *now*. Issues added mid-cycle and issues
+- Scope is the set of tasks attached *now*. Tasks added mid-cycle and tasks
   rolled over into the next cycle are not separated here, so
   `scopeCompletion` compares delivery against the final scope rather than the
   scope the cycle opened with.

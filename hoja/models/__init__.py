@@ -7,7 +7,7 @@ from hoja.models.base import (
 )
 from hoja.models.cycle import Cycle
 from hoja.models.enums import IssuePriority
-from hoja.models.issue import (
+from hoja.models.task import (
     Comment,
     Issue,
     IssueLabel,

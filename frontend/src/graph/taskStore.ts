@@ -52,7 +52,7 @@ const UPDATE = `mutation($id:String!,$input:IssueUpdateInput!){issueUpdate(id:$i
 function summarize(failures: {error: Error}[], total: number, verb: string): string {
   if (!failures.length) return '';
   const first = failures[0].error.message || 'Request failed';
-  return total === 1 ? first : `${failures.length} of ${total} issues could not be ${verb}: ${first}`;
+  return total === 1 ? first : `${failures.length} of ${total} tasks could not be ${verb}: ${first}`;
 }
 
 /** Overlay every update at once, then send them BULK_CONCURRENCY at a time. Returns failed ids + message. */

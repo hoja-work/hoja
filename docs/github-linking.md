@@ -1,12 +1,12 @@
 # GitHub linking
 
-A Hoja issue should show the GitHub work that belongs to it: the branches, pull requests,
+A Hoja task should show the GitHub work that belongs to it: the branches, pull requests,
 commits, deployments and checks that name its identifier. This document records the design and,
 plainly, how much of it exists today.
 
 **Implemented:** identifier detection (`hoja_server/github_linking.py`), the `github_link` and
 `github_delivery` tables, the signed webhook receiver for `pull_request` and `push`, the
-`Issue.githubLinks` GraphQL field, and the GitHub section on the issue page.
+`Issue.githubLinks` GraphQL field, and the GitHub section on the task page.
 
 **Follow-up work, specified here but not built:** the backfill/poll for repositories without a
 webhook, and the authenticated "deployed to prod at <sha>" endpoint. The `deploy` and `check`
@@ -15,7 +15,7 @@ link kinds are recorded in the data model and rendered by the panel, but nothing
 ## Why identifiers and not a mapping table
 
 Hoja already writes the identifier into every branch it generates
-(`<uid>/<identifier>-<slug>`, `hoja_server/writer.py`), and issues expose it as `branchName`.
+(`<uid>/<identifier>-<slug>`, `hoja_server/writer.py`), and tasks expose it as `branchName`.
 GitHub text therefore already contains the join key, so linking needs no prior registration:
 a pull request that mentions `HOJA-123` is evidence, whether or not anyone connected anything
 in advance.
@@ -34,7 +34,7 @@ deliberately strict:
   generates a branch.
 - **Closing keywords** `close`/`closes`/`closed`, `fix`/`fixes`/`fixed`,
   `resolve`/`resolves`/`resolved` mark a reference as closing, with an optional colon
-  (`fixes: HOJA-1`). A closing reference is the only thing allowed to move an issue to Done.
+  (`fixes: HOJA-1`). A closing reference is the only thing allowed to move a task to Done.
 
 Sources, in the order the panel prefers them: pull request title, pull request body, head branch,
 commit message. A merge commit's subject contains the source branch, so work that reached the
@@ -82,7 +82,7 @@ machine-ingested events.
 | --- | --- |
 | `id` | Row id. |
 | `organization_id` | Tenant; every read is scoped by it under RLS. |
-| `issue_id` | The linked issue. |
+| `issue_id` | The linked task. |
 | `kind` | `pr`, `commit`, `issue`, `deploy` or `check`. |
 | `external_id` | GitHub's id for the object; unique with `kind` and `organization_id` so re-delivery upserts. |
 | `url`, `title`, `state`, `author` | Display fields straight from the payload. |
@@ -98,10 +98,10 @@ connector tables are.
 
 Off by default, configurable per team:
 
-- pull request opened → move linked issues to In Progress;
-- pull request merged and a closing keyword present → move linked issues to Done.
+- pull request opened → move linked tasks to In Progress;
+- pull request merged and a closing keyword present → move linked tasks to Done.
 
-Both are opt-in per team because they change issue state as a side effect of an external event.
+Both are opt-in per team because they change task state as a side effect of an external event.
 A merged PR without a closing keyword never moves anything.
 
 ## Deploys
@@ -112,7 +112,7 @@ Two inputs, one effect:
   sha.
 - **An authenticated endpoint** lets the release runbook declare
   "deployed to prod at `<sha>`". It resolves the commits contained in that sha, finds the linked
-  issues, and records the deployment against each of them.
+  tasks, and records the deployment against each of them.
 
 The endpoint is authenticated as a workspace actor so it cannot be driven by an anonymous caller,
 and it is the only link-creating write path that is not a GitHub delivery.

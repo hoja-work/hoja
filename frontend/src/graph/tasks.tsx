@@ -5,8 +5,9 @@ import {gql, relTime, stateKey} from '../main';
 import type {Cycle, Issue, IssueActivityEvent, IssueLabel, IssueState, Project, Team, Viewer} from '../main';
 import {Markdown} from '../markdown';
 import {addLocalIssue, getSync, guessNextIdentifier, isLocalIssueId, localIssueId, onEntityChange, useEntityVersion, useIssueSelect, useIssues, useSyncMeta, useSyncStatus} from '../sync';
-import {addLabelInput, bulkRemove, bulkUpdate, useHiddenIssueIds, useScrollWindow, useStableCallback, visibleRange} from './issueStore';
+import {addLabelInput, bulkRemove, bulkUpdate, useHiddenIssueIds, useScrollWindow, useStableCallback, visibleRange} from './taskStore';
 import {Avatar, CycleChip, CycleGlyph, DueChip, FavStar, IconBtn, LabelChip, LinMenu, GraphStatusIcon, PriorityIcon, ProjectChip, Ring, StatusAgeIcon, SubIssuePill, Tip, cx, dueIsOverdue, fmtDate, fmtFullDate, formatDueDay, parseDueDay, useDismiss, useFavorite, type MenuItem} from './shared';
+import {childRollups, nestIssues, type SubtreeRow} from './subtree';
 import {runExtensionAction, useIssueExtensionActions, type ExtensionAction} from '../extensions';
 
 /* the upstream API 1:1 Issues list + board + detail. */
@@ -275,7 +276,7 @@ export function DisplayPanel({display, setDisplay, onClose, anchorClass}: {
       </div>
       <div className="dp-sec">
         <div className="dp-title">Grouping</div>
-        <select aria-label="Group issues by" value={display.grouping}
+        <select aria-label="Group tasks by" value={display.grouping}
           onChange={e => set({grouping: e.target.value as LinDisplay['grouping']})}>
           <option value="none">No grouping</option>
           <option value="status">Status</option>
@@ -288,7 +289,7 @@ export function DisplayPanel({display, setDisplay, onClose, anchorClass}: {
       <div className="dp-sec">
         <div className="dp-title">Ordering</div>
         <div className="dp-row">
-          <select aria-label="Order issues by" value={display.ordering}
+          <select aria-label="Order tasks by" value={display.ordering}
             onChange={e => set({ordering: e.target.value as LinDisplay['ordering']})}>
             <option value="updated">Updated</option>
             <option value="created">Created</option>
@@ -300,7 +301,7 @@ export function DisplayPanel({display, setDisplay, onClose, anchorClass}: {
           </div>
         </div>
         <div className="dp-row"><label><input type="checkbox" className="lin-check" checked={display.hideCompleted}
-          onChange={e => set({hideCompleted: e.target.checked})} /> Hide completed issues</label></div>
+          onChange={e => set({hideCompleted: e.target.checked})} /> Hide completed tasks</label></div>
         <div className="dp-row"><label><input type="checkbox" className="lin-check" checked={display.showSubIssues}
           onChange={e => set({showSubIssues: e.target.checked})} /> Show sub-tasks</label></div>
         <div className="dp-row"><label><input type="checkbox" className="lin-check" checked={display.showEmptyColumns}
@@ -328,15 +329,19 @@ export function DisplayPanel({display, setDisplay, onClose, anchorClass}: {
 
 /* ---------------- issue row ---------------- */
 
+export type NestedIssueRow = SubtreeRow<LinIssue>;
+
 /* Memoized: with stable onSelect/onOpen only rows whose issue/selection changed re-render. */
-export const IssueRow = memo(function IssueRow({issue, display, selected, onSelect, onOpen, childCount, showCheckbox}: {
+export const IssueRow = memo(function IssueRow({issue, display, selected, onSelect, onOpen, childCount, childDone, depth, parentIdent, showCheckbox}: {
   issue: LinIssue; display: LinDisplay; selected: boolean;
   onSelect: (id: string, on: boolean) => void; onOpen: (issue: LinIssue) => void;
-  childCount: number; showCheckbox: boolean;
+  childCount: number; childDone?: number; depth?: number; parentIdent?: string; showCheckbox: boolean;
 }) {
   const p = display.props;
+  const level = depth || 0;
   return (
-    <div className={cx('lin-row', selected && 'selected')}>
+    <div className={cx('lin-row', selected && 'selected', level > 0 && 'lin-row-child')}
+      data-depth={level} style={level ? {paddingLeft: 10 + level * 20} : undefined}>
       {showCheckbox && (
         <span className="rowcheck">
           <input type="checkbox" aria-label={`Select ${issue.identifier}`} checked={selected}
@@ -345,9 +350,10 @@ export const IssueRow = memo(function IssueRow({issue, display, selected, onSele
       )}
       {p.priority && <PriorityIcon priority={issue.priority} />}
       {p.id && <span className="ident">{issue.identifier}</span>}
+      {parentIdent && <span className="lin-parentchip" title={`Sub-task of ${parentIdent}`}>{parentIdent}</span>}
       {p.status && <StatusAgeIcon issue={issue} />}
       <button type="button" className="title" onClick={() => onOpen(issue)} title={issue.title}>{issue.title}</button>
-      {childCount > 0 && <SubIssuePill done={0} total={childCount} />}
+      {childCount > 0 && <SubIssuePill done={childDone || 0} total={childCount} />}
       <span className="meta">
         {p.labels && issue.labels?.nodes.map(l => <LabelChip key={l.id} label={l} />)}
         {p.project && issue.project && <ProjectChip name={issue.project.name} />}
@@ -368,10 +374,11 @@ export const IssueRow = memo(function IssueRow({issue, display, selected, onSele
  * optional. The card itself stays a click target for the detail page. */
 const BOARD_PRIORITIES = ['No priority', 'Urgent', 'High', 'Medium', 'Low'];
 
-const BoardCard = memo(function BoardCard({issue, team, onOpen, onDragStart, onUpdate}: {
+const BoardCard = memo(function BoardCard({issue, team, onOpen, onDragStart, onUpdate, depth, parentIdent, rollup}: {
   issue: LinIssue; team?: Team;
   onOpen: (i: LinIssue) => void; onDragStart: (e: React.DragEvent, i: LinIssue) => void;
   onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
+  depth?: number; parentIdent?: string; rollup?: {done: number; total: number};
 }) {
   const [menu, setMenu] = useState<null | 'status' | 'priority' | 'assignee' | 'due'>(null);
   const [error, setError] = useState('');
@@ -383,6 +390,7 @@ const BoardCard = memo(function BoardCard({issue, team, onOpen, onDragStart, onU
   const dueRef = useDismiss(useCallback(() => setMenu(m => (m === 'due' ? null : m)), []));
   const close = useCallback(() => setMenu(null), []);
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
+  const level = depth || 0;
   const run = async (input: Record<string, unknown>) => {
     setError('');
     try { await onUpdate(issue.id, input); } catch (e) { setError((e as Error).message); }
@@ -395,12 +403,15 @@ const BoardCard = memo(function BoardCard({issue, team, onOpen, onDragStart, onU
     setMenu(m => (m === kind ? null : kind));
   };
   return (
-    <div className="lin-bcard" draggable role="button" tabIndex={0}
+    <div className={cx('lin-bcard', level > 0 && 'lin-bcard-child')} data-depth={level}
+      style={level ? {marginLeft: 14 + (level - 1) * 14} : undefined}
+      draggable role="button" tabIndex={0}
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(issue); } }}
       onDragStart={e => { if ((e.target as HTMLElement).closest('input,select,label,button')) { e.preventDefault(); return; } onDragStart(e, issue); }}
       onClick={() => onOpen(issue)}>
       <span className="top">
         <span className="ident">{issue.identifier}</span>
+        {parentIdent && <span className="lin-parentchip" title={`Sub-task of ${parentIdent}`}>{parentIdent}</span>}
         <span className="lin-card-ctl" onClick={stop} role="presentation">
           <button type="button" className="lin-card-btn" aria-haspopup="menu" aria-expanded={menu === 'status'}
             aria-label={`Status of ${issue.identifier}: ${issue.state?.name || 'No status'}`} onClick={toggle('status')}>
@@ -429,6 +440,7 @@ const BoardCard = memo(function BoardCard({issue, team, onOpen, onDragStart, onU
       </span>
       <button type="button" className="ttl lin-card-open" onClick={e => { e.stopPropagation(); onOpen(issue); }} aria-label={`Open ${issue.identifier}: ${issue.title}`}>{issue.title}</button>
       <span className="chips">
+        {rollup && rollup.total > 0 && <SubIssuePill done={rollup.done} total={rollup.total} />}
         {issue.labels?.nodes.map(l => <LabelChip key={l.id} label={l} />)}
         {issue.project && <ProjectChip name={issue.project.name} />}
         <span className="lin-card-ctl" onClick={stop} role="presentation" ref={dueRef}>
@@ -470,21 +482,25 @@ const BoardCard = memo(function BoardCard({issue, team, onOpen, onDragStart, onU
 /* A column renders its first cards and grows as it is scrolled, so a 10k-card backlog stays cheap. */
 const BOARD_PAGE = 60;
 const BOARD_STEP = 200;
-function BoardColumnCards({items, team, onOpen, onDragStart, onUpdate}: {
-  items: LinIssue[]; team?: Team;
+function BoardColumnCards({rows, team, onOpen, onDragStart, onUpdate, rollups}: {
+  rows: NestedIssueRow[]; team?: Team;
   onOpen: (i: LinIssue) => void; onDragStart: (e: React.DragEvent, i: LinIssue) => void;
   onUpdate: (issueId: string, input: Record<string, unknown>) => Promise<void>;
+  rollups: Map<string, {done: number; total: number}>;
 }) {
   const [limit, setLimit] = useState(BOARD_PAGE);
-  const more = items.length - limit;
+  const more = rows.length - limit;
   return (
     <div className="lin-bcards" onScroll={more > 0 ? e => {
       const el = e.currentTarget;
       if (el.scrollTop + el.clientHeight > el.scrollHeight - 800) setLimit(l => l + BOARD_STEP);
     } : undefined}>
-      {(more > 0 ? items.slice(0, limit) : items).map(i => <BoardCard key={i.id} issue={i} team={team} onOpen={onOpen} onDragStart={onDragStart} onUpdate={onUpdate} />)}
+      {(more > 0 ? rows.slice(0, limit) : rows).map(({issue, depth, parentIdent}) => (
+        <BoardCard key={issue.id} issue={issue} team={team} onOpen={onOpen} onDragStart={onDragStart} onUpdate={onUpdate}
+          depth={depth} parentIdent={parentIdent} rollup={rollups.get(issue.id)} />
+      ))}
       {more > 0 && <button type="button" className="lin-btn" onClick={() => setLimit(l => l + BOARD_STEP)}>Show {Math.min(more, BOARD_STEP)} more of {more}</button>}
-      {!items.length && <div className="lin-bempty">No tasks</div>}
+      {!rows.length && <div className="lin-bempty">No tasks</div>}
     </div>
   );
 }
@@ -505,6 +521,22 @@ function GraphBoard({issues, states, team, onOpen, onMoved, onUpdate, onNew, dis
     for (const i of issues) if (i.state) by.get(stateKey(i.state))?.push(i);
     return states.map(s => ({state: s, items: by.get(stateKey(s)) || []}));
   }, [issues, states]);
+  /* Sub-task progress per parent, counted from the same rows the board renders, so the
+   * card pill says 2/3 because two children really are completed — not because 0 was hardcoded. */
+  const rollups = useMemo(() => {
+    const m = new Map<string, {done: number; total: number}>();
+    for (const i of issues) {
+      const pid = i.parent?.id;
+      if (!pid) continue;
+      const r = m.get(pid) || {done: 0, total: 0};
+      r.total += 1;
+      if (i.state?.type === 'completed') r.done += 1;
+      m.set(pid, r);
+    }
+    return m;
+  }, [issues]);
+  // Each column nests its own sub-tasks; a child whose parent sits in another column keeps a parent chip.
+  const nested = useMemo(() => new Map(cols.map(c => [stateKey(c.state), nestIssues(c.items)])), [cols]);
   const visible = cols.filter(c => !display.hiddenColumns.includes(stateKey(c.state)) && (display.showEmptyColumns || c.items.length));
   const hidden = cols.filter(c => display.hiddenColumns.includes(stateKey(c.state)));
   const onDragStart = useCallback((e: React.DragEvent, it: LinIssue) => { dragIssue.current = it; e.dataTransfer.effectAllowed = 'move'; }, []);
@@ -528,7 +560,7 @@ function GraphBoard({issues, states, team, onOpen, onMoved, onUpdate, onNew, dis
             <GraphStatusIcon state={state} size={13} />
             <span>{state.name}</span><span className="count">{items.length}</span>
             <span className="sp" />
-            <button type="button" aria-label={`Add issue to ${state.name}`} onClick={() => onNew(state.id)}><Plus size={14} /></button>
+            <button type="button" aria-label={`Add task to ${state.name}`} onClick={() => onNew(state.id)}><Plus size={14} /></button>
             <span style={{position: 'relative'}}>
               <button type="button" aria-label={`${state.name} column options`} onClick={() => setColMenu(m => m === stateKey(state) ? null : stateKey(state))}>···</button>
               {colMenu === stateKey(state) && (
@@ -538,7 +570,7 @@ function GraphBoard({issues, states, team, onOpen, onMoved, onUpdate, onNew, dis
               )}
             </span>
           </header>
-          <BoardColumnCards items={items} team={team} onOpen={onOpen} onDragStart={onDragStart} onUpdate={onUpdate} />
+          <BoardColumnCards rows={nested.get(stateKey(state)) || []} team={team} onOpen={onOpen} onDragStart={onDragStart} onUpdate={onUpdate} rollups={rollups} />
         </section>
       ))}
       {hidden.length > 0 && (
@@ -605,7 +637,7 @@ function BulkBar({selected, byId, team, cycles, labels, onClear, onDone}: {
               ))}
               <div className="lin-menu-divider" />
               <button type="button" className="lin-menu-item" onClick={() => void remove('archive')}>Archive</button>
-              <button type="button" className="lin-menu-item danger" onClick={async () => { if (await confirmDialog(`Delete ${selected.length} issues? This cannot be undone.`)) void remove('delete'); }}>Delete</button>
+              <button type="button" className="lin-menu-item danger" onClick={async () => { if (await confirmDialog(`Delete ${selected.length} tasks? This cannot be undone.`)) void remove('delete'); }}>Delete</button>
             </> : <>
               <button type="button" className="lin-menu-item" onClick={() => setAction('menu')}>‹ Back</button>
               <div className="lin-menu-divider" />
@@ -718,7 +750,7 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
       if (gen !== olderGen.current) return;
       const page = d.issues;
       if (page.pageInfo?.hasNextPage && (!page.pageInfo.endCursor || page.pageInfo.endCursor === after || !page.nodes.length))
-        throw new Error('Issue pagination did not advance.');
+        throw new Error('Task pagination did not advance.');
       // Adopted issues join the store, so they render through useIssues() and stay live.
       getSync()?.adopt(page.nodes);
       setOlder(o => ({cursor: page.pageInfo?.endCursor || null, hasMore: Boolean(page.pageInfo?.hasNextPage), loading: false, error: '', loaded: o.loaded + page.nodes.length}));
@@ -727,11 +759,17 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
     }
   };
 
-  const childCounts = useMemo(() => {
-    const m = new Map<string, number>();
+  /* Sub-task rollup per parent from every loaded row (not just the visible group), so a
+   * parent row's pill reports the real done/total instead of a fixed 0. */
+  const childRollups = useMemo(() => {
+    const m = new Map<string, {done: number; total: number}>();
     for (const i of rows) {
       const pid = i.parent?.id;
-      if (pid) m.set(pid, (m.get(pid) || 0) + 1);
+      if (!pid) continue;
+      const r = m.get(pid) || {done: 0, total: 0};
+      r.total += 1;
+      if (i.state?.type === 'completed') r.done += 1;
+      m.set(pid, r);
     }
     return m;
   }, [rows]);
@@ -747,6 +785,7 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
 
   const teamStates = team?.states.nodes;
   const groups = useMemo(() => groupLinIssues(scoped, effDisplay, teamStates || []), [scoped, effDisplay, teamStates]);
+  const nestedGroups = useMemo(() => groups.map(g => ({...g, rows: nestIssues(g.items)})), [groups]);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const collapsedSet = useMemo(() => new Set(collapsed), [collapsed]);
   const onSelect = useCallback((id: string, on: boolean) => setSelected(s => on ? (s.includes(id) ? s : [...s, id]) : s.filter(x => x !== id)), []);
@@ -798,7 +837,7 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
   let y = LIST_PAD_TOP;
 
   return (
-    <section className="lin-page" aria-label={`${team.name} issues`}>
+    <section className="lin-page" aria-label={`${team.name} tasks`}>
       <header className="lin-head">
         <nav className="lin-crumb" aria-label="Breadcrumb">
           <button type="button" className="crumb-link" onClick={() => onNavigate('Team Home', `/workspace/team/${team.key.toLowerCase()}/home`)}>{workspaceName}</button>
@@ -806,7 +845,7 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
           <span className="current">Tasks</span>
         </nav>
         <div className="lin-head-actions">
-          <FavStar kind="issues" id={`team-issues-${team.id}`} label={`${team.name} issues`} />
+          <FavStar kind="issues" id={`team-issues-${team.id}`} label={`${team.name} tasks`} />
           <span style={{position: 'relative'}}>
             <IconBtn label="Team notifications" title="Notification settings" onClick={() => setNotifOpen(v => !v)}><Bell size={15} /></IconBtn>
             {notifOpen && (
@@ -821,7 +860,7 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
       </header>
 
       <div className="lin-viewbar">
-        <div className="lin-tabs" role="tablist" aria-label="Issue scope">
+        <div className="lin-tabs" role="tablist" aria-label="Task scope">
           {(['active', 'backlog', 'all'] as const).map(t => (
             <button key={t} type="button" role="tab" aria-selected={tab === t} className="lin-tab"
               onClick={() => setTab(t)}>{t === 'all' ? 'All tasks' : t[0].toUpperCase() + t.slice(1)}</button>
@@ -873,15 +912,15 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
       )}
 
       <div className="lin-scroll" ref={scrollRef}>
-        {loading && <p className="lin-loading" role="status">Loading issues…</p>}
+        {loading && <p className="lin-loading" role="status">Loading tasks…</p>}
         {!loading && (layout === 'Board'
           ? <GraphBoard issues={scoped} states={team.states.nodes} team={team} onOpen={openIssue}
               onMoved={movedStable} onUpdate={updateStable}
               onNew={onNew} display={effDisplay} setDisplay={setDisplayWithLayout} />
           : <div className="lin-list" ref={listRef}>
-              {groups.map(g => {
+              {nestedGroups.map(g => {
                 const isCollapsed = collapsedSet.has(g.key);
-                const n = isCollapsed ? 0 : g.items.length;
+                const n = isCollapsed ? 0 : g.rows.length;
                 y += GROUP_GAP;
                 const rowsTop = y + (g.name ? GROUP_HEAD : 0);
                 const [start, end] = windowed ? visibleRange(win, rowsTop, rowH, n) : [0, n];
@@ -904,12 +943,15 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
                     </header>
                   )}
                   {start > 0 && <div aria-hidden="true" style={{height: start * rowH}} />}
-                  {(start > 0 || end < n ? g.items.slice(start, end) : n ? g.items : []).map(i => (
-                    <IssueRow key={i.id} issue={i} display={effDisplay}
-                      selected={selectedSet.has(i.id)}
+                  {(start > 0 || end < n ? g.rows.slice(start, end) : n ? g.rows : []).map(({issue, depth, parentIdent}) => (
+                    <IssueRow key={issue.id} issue={issue} display={effDisplay}
+                      depth={depth} parentIdent={parentIdent}
+                      selected={selectedSet.has(issue.id)}
                       showCheckbox
                       onSelect={onSelect}
-                      onOpen={openIssue} childCount={childCounts.get(i.id) || 0} />
+                      onOpen={openIssue}
+                      childCount={childRollups.get(issue.id)?.total || 0}
+                      childDone={childRollups.get(issue.id)?.done || 0} />
                   ))}
                   {end < n && <div aria-hidden="true" style={{height: (n - end) * rowH}} />}
                 </section>
@@ -919,15 +961,15 @@ export function GraphTeamIssues({team, teams, orgId, workspaceName, projects, la
                 <div className="lin-empty">
                   <ListFilter size={30} strokeWidth={1.4} />
                   <h2>No tasks match</h2>
-                  <p>Try clearing filters or create a new issue.</p>
-                  <button type="button" className="lin-btn primary" onClick={() => onNew()}><Plus size={14} /> New issue</button>
+                  <p>Try clearing filters or create a new task.</p>
+                  <button type="button" className="lin-btn primary" onClick={() => onNew()}><Plus size={14} /> New task</button>
                 </div>
               )}
               {showOlder && (
                 <div className="lin-loadmore">
                   {older.hasMore && (
                     <button type="button" className="lin-btn" onClick={() => void loadOlder()} disabled={older.loading}
-                      title={`Closed issues last updated before ${closedCutoff} are loaded on demand`}>
+                      title={`Closed tasks last updated before ${closedCutoff} are loaded on demand`}>
                       {older.loading ? 'Loading…' : `Load older closed tasks (${rows.length} shown)`}
                     </button>
                   )}
@@ -1120,10 +1162,10 @@ function describeEvent(e: {eventType: string; actor?: {name?: string}; changes?:
   if (e.eventType === 'issueCreated' || e.eventType === 'created') return `${actor} created the task`;
   const sname = (id?: string | null) => (id && states.find(s => s.id === id)?.name) || 'Unknown';
   if (ch.stateId) return `${actor} moved from ${sname(ch.stateId.from)} to ${sname(ch.stateId.to)}`;
-  if (ch.assigneeId) return `${actor} assigned the issue`;
+  if (ch.assigneeId) return `${actor} assigned the task`;
   if (ch.cycleId) return `${actor} changed the cycle`;
   if (ch.priority) return `${actor} changed the priority`;
-  return `${actor} updated the issue`;
+  return `${actor} updated the task`;
 }
 
 type PendingComment = {id: string; body: string; createdAt: string; known: Set<string>};
@@ -1497,6 +1539,16 @@ export function GraphIssueDetail({workspaceName, viewer, issue, issueList, onOpe
           <span className="sep">›</span>
           <span>{workspaceName}</span>
           <span className="sep">›</span>
+          {detail.parent && (
+            <>
+              <button type="button" className="crumb-link lin-crumb-parent" data-parent-path={detail.parent.identifier}
+                title={`Parent: ${detail.parent.identifier} ${detail.parent.title}`}
+                onClick={() => onOpenIssue({...(detail.parent as LinIssue), id: detail.parent!.id})}>
+                {detail.parent.identifier}
+              </button>
+              <span className="sep">›</span>
+            </>
+          )}
           <span className="crumb-id">{detail.identifier}</span>
           <span className="current">{detail.title}</span>
         </nav>
@@ -1510,7 +1562,7 @@ export function GraphIssueDetail({workspaceName, viewer, issue, issueList, onOpe
               ...actionMenuItems,
               {key: 'div', divider: true},
               {key: 'archive', label: 'Archive task', onSelect: async () => { if (await confirmDialog(`Archive ${detail.identifier}?`)) archive(); }},
-              {key: 'delete', label: 'Delete issue', danger: true, onSelect: async () => { if (await confirmDialog(`Permanently delete ${detail.identifier}? This cannot be undone.`)) remove(); }},
+              {key: 'delete', label: 'Delete task', danger: true, onSelect: async () => { if (await confirmDialog(`Permanently delete ${detail.identifier}? This cannot be undone.`)) remove(); }},
             ]} />}
           </span>
           {idx >= 0 && <>
@@ -1587,13 +1639,14 @@ export function GraphIssueDetail({workspaceName, viewer, issue, issueList, onOpe
               <ChevronDown size={14} color="var(--muted)" />
               <span>Sub-tasks</span>
               <SubIssuePill done={subsDone} total={subsView.length} />
+              <span className="count" data-subcount={subsView.length} aria-label={`${subsView.length} sub-tasks`}>{subsView.length}</span>
               <span className="grow" />
               <IconBtn label="Sub-task display settings" title="Sub-task display options are not available yet" disabled><SlidersHorizontal size={14} /></IconBtn>
               <IconBtn label="Add sub-task" title="Add sub-task" onClick={() => setAddingSub(v => !v)}><Plus size={14} /></IconBtn>
             </header>
             {addingSub && (
               <div style={{display: 'flex', gap: 8, margin: '4px 0 8px'}}>
-                <input placeholder="Sub-issue title…" value={newSubTitle}
+                <input placeholder="Sub-task title…" value={newSubTitle}
                   onChange={e => setNewSubTitle(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') void createSub(); }}
                   style={{flex: 1, border: '1px solid var(--line)', borderRadius: 7, padding: '8px 10px', fontSize: 13}} />
@@ -1604,10 +1657,11 @@ export function GraphIssueDetail({workspaceName, viewer, issue, issueList, onOpe
               <div key={s.id} className={cx('lin-subrow', s.state?.type === 'completed' && 'done', isLocalIssueId(s.id) && 'pending')}
                 aria-busy={isLocalIssueId(s.id) || undefined} {...(isLocalIssueId(s.id) ? {} : issueIntentProps(s))}>
                 <GraphStatusIcon state={s.state} size={14} />
+                <span className="ident">{s.identifier}</span>
                 <button type="button" className="t" disabled={isLocalIssueId(s.id)} onClick={() => onOpenIssue(s)} title={s.title}>{s.title}</button>
                 {s.labels?.nodes.map(l => <LabelChip key={l.id} label={l} />)}
                 {s.assignee && <Avatar name={s.assignee.name} size={18} />}
-                <IconBtn label={`Open sub-issue ${s.identifier}`} title="Open sub-issue" disabled={isLocalIssueId(s.id)} onClick={() => onOpenIssue(s)}>
+                <IconBtn label={`Open sub-task ${s.identifier}`} title="Open sub-task" disabled={isLocalIssueId(s.id)} onClick={() => onOpenIssue(s)}>
                   <ExternalLink size={13} />
                 </IconBtn>
               </div>
@@ -1865,7 +1919,7 @@ export function GraphIssueDetail({workspaceName, viewer, issue, issueList, onOpe
           <div className="lin-ts">Updated {detail.updatedAt ? new Date(detail.updatedAt).toLocaleString() : '—'}</div>
 
           <div className="sec">Related</div>
-          <Tip label="Issue relations are not available in Hoja yet">
+          <Tip label="Task relations are not available in Hoja yet">
             <button type="button" className="lin-addrow" disabled style={{opacity: .5, cursor: 'not-allowed'}}>Add relationship…</button>
           </Tip>
         </aside>

@@ -213,7 +213,7 @@ export function ExtensionsSettings() {
         </div>}
         {!loading && !loadError && !extensions.length && <div className="extension-empty-state">
           <b>No extensions installed</b>
-          <p>Install one from a manifest above. Its hooks and actions appear here and in the issue menu.</p>
+          <p>Install one from a manifest above. Its hooks and actions appear here and in the task menu.</p>
         </div>}
 
         {!loading && !loadError && extensions.length > 0 && <ul className="extension-list" aria-label="Installed extensions">
@@ -260,7 +260,7 @@ export function ExtensionsSettings() {
                       <code>{action.key}</code>
                       <span className="extension-chip-key">{action.entity}</span>
                     </li>)}</ul>
-                  : <p className="extension-section-empty">No actions. This extension cannot be run from an issue.</p>}
+                  : <p className="extension-section-empty">No actions. This extension cannot be run from a task.</p>}
               </div>
 
               {ext.failures.length > 0 && <div className="extension-section">
