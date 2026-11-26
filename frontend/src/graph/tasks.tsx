@@ -25,7 +25,6 @@ import React, {
 import { confirmDialog } from "../dialogs";
 import {
   Check,
-  ChevronDown,
   ChevronRight,
   Copy,
   ExternalLink,
@@ -4051,18 +4050,10 @@ export function GraphIssueDetail({
               const ghl = detail.githubLinks || [];
               if (!ghl.length) return null;
               return (
-                <section
-                  className={styleClasses(
-                    "border-t border-t-line py-3.5 px-0 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-2 [&_>_header]:text-[13px] [&_>_header]:font-semibold [&_>_header]:mb-1.5",
-                  )}
-                  data-style-hooks={styleHooks(
-                    "lin-subsec border-t border-t-line py-[14px] px-0 [&_>_header]:flex [&_>_header]:items-center [&_>_header]:gap-[8px] [&_>_header]:text-[13px] [&_>_header]:font-semibold [&_>_header]:mb-[6px]",
-                  )}
-                  aria-label="GitHub"
-                >
-                  <header>
-                    <ChevronDown size={14} color="var(--muted)" />
-                    <span>GitHub</span>
+                <DetailSection
+                  title="GitHub"
+                  label="GitHub"
+                  badge={
                     <span
                       style={{
                         color: "var(--muted)",
@@ -4078,7 +4069,8 @@ export function GraphIssueDetail({
                     >
                       {ghl.length}
                     </span>
-                  </header>
+                  }
+                >
                   <div
                     className={styleClasses(
                       "flex flex-col gap-1.5 my-1.5 mx-0",
@@ -4143,7 +4135,7 @@ export function GraphIssueDetail({
                       );
                     })}
                   </div>
-                </section>
+                </DetailSection>
               );
             })()}
 
